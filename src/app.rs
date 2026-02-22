@@ -286,6 +286,27 @@ impl App {
                 self.list_state.select(Some(0));
                 self.update_preview();
             }
+            Action::FilterKillWord => {
+                let chars: Vec<char> = self.filter_query.chars().collect();
+                let mut pos = chars.len();
+                while pos > 0 && chars[pos - 1].is_whitespace() {
+                    pos -= 1;
+                }
+                while pos > 0 && !chars[pos - 1].is_whitespace() {
+                    pos -= 1;
+                }
+                self.filter_query = chars[..pos].iter().collect();
+                self.rebuild_flat_entries();
+                self.list_state.select(Some(0));
+                self.update_preview();
+            }
+            Action::FilterKillLine => {
+                self.filter_query.clear();
+                self.rebuild_flat_entries();
+                self.list_state.select(Some(0));
+                self.update_preview();
+            }
+
             Action::ExitFilter => {
                 self.filter_query = String::new();
                 self.mode = Mode::Normal;

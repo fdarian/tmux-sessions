@@ -1,4 +1,4 @@
-use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
+use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 #[derive(Clone)]
 pub enum Action {
@@ -16,6 +16,8 @@ pub enum Action {
     EnterFilter,
     FilterChar(char),
     FilterBackspace,
+    FilterKillWord,
+    FilterKillLine,
     ExitFilter,
     None,
 }
@@ -51,13 +53,15 @@ pub fn map_key(key: KeyEvent, mode: &Mode) -> Action {
             KeyCode::Char('n') | KeyCode::Esc => Action::CancelKill,
             _ => Action::None,
         },
-        Mode::Filtering => match key.code {
-            KeyCode::Esc => Action::ExitFilter,
-            KeyCode::Enter => Action::Select,
-            KeyCode::Char('j') | KeyCode::Down => Action::MoveDown,
-            KeyCode::Char('k') | KeyCode::Up => Action::MoveUp,
-            KeyCode::Backspace => Action::FilterBackspace,
-            KeyCode::Char(c) if c.is_ascii_graphic() || c == ' ' => Action::FilterChar(c),
+        Mode::Filtering => match (key.code, key.modifiers) {
+            (KeyCode::Esc, _) => Action::ExitFilter,
+            (KeyCode::Enter, _) => Action::Select,
+            (KeyCode::Up, _) => Action::MoveUp,
+            (KeyCode::Down, _) => Action::MoveDown,
+            (KeyCode::Backspace, KeyModifiers::SUPER) | (KeyCode::Char('u'), KeyModifiers::CONTROL) => Action::FilterKillLine,
+            (KeyCode::Backspace, KeyModifiers::ALT) => Action::FilterKillWord,
+            (KeyCode::Backspace, _) => Action::FilterBackspace,
+            (KeyCode::Char(c), _) if c.is_ascii_graphic() || c == ' ' => Action::FilterChar(c),
             _ => Action::None,
         },
     }
