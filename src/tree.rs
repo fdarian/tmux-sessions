@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 
+use fuzzy_matcher::FuzzyMatcher;
 use ratatui::text::Line;
 
 use crate::tmux;
@@ -122,8 +123,8 @@ pub fn flatten_filtered(
     panes: &[tmux::Pane],
     query: &str,
 ) -> Vec<FlatEntry> {
-    let mut entries = Vec::new();
-    let query_lower = query.to_lowercase();
+    let matcher = fuzzy_matcher::skim::SkimMatcherV2::default();
+    let mut scored: Vec<(i64, FlatEntry)> = Vec::new();
 
     for session in sessions.iter() {
         let mut text = format!("{}: {} windows", session.name, session.window_count);
@@ -131,15 +132,15 @@ pub fn flatten_filtered(
             text.push_str(" (attached)");
         }
 
-        if text.to_lowercase().contains(&query_lower) {
-            entries.push(FlatEntry {
+        if let Some(score) = matcher.fuzzy_match(&text, query) {
+            scored.push((score, FlatEntry {
                 node_id: NodeId::Session(session.id.clone()),
                 depth: 0,
                 has_children: false,
                 is_last_sibling: false,
                 ancestor_is_last: vec![],
                 text,
-            });
+            }));
         }
 
         let session_windows: Vec<&tmux::Window> =
@@ -151,15 +152,15 @@ pub fn flatten_filtered(
                 window.index, window.name, window.flags, window.pane_title
             );
 
-            if text.to_lowercase().contains(&query_lower) {
-                entries.push(FlatEntry {
+            if let Some(score) = matcher.fuzzy_match(&text, query) {
+                scored.push((score, FlatEntry {
                     node_id: NodeId::Window(session.id.clone(), window.id.clone()),
                     depth: 0,
                     has_children: false,
                     is_last_sibling: false,
                     ancestor_is_last: vec![],
                     text,
-                });
+                }));
             }
 
             let window_panes: Vec<&tmux::Pane> = panes
@@ -180,8 +181,8 @@ pub fn flatten_filtered(
                     )
                 };
 
-                if text.to_lowercase().contains(&query_lower) {
-                    entries.push(FlatEntry {
+                if let Some(score) = matcher.fuzzy_match(&text, query) {
+                    scored.push((score, FlatEntry {
                         node_id: NodeId::Pane(
                             session.id.clone(),
                             window.id.clone(),
@@ -192,13 +193,14 @@ pub fn flatten_filtered(
                         is_last_sibling: false,
                         ancestor_is_last: vec![],
                         text,
-                    });
+                    }));
                 }
             }
         }
     }
 
-    entries
+    scored.sort_by(|a, b| b.0.cmp(&a.0));
+    scored.into_iter().map(|(_, entry)| entry).collect()
 }
 
 pub fn format_line(

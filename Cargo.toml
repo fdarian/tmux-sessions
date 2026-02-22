@@ -6,4 +6,5 @@ edition = "2024"
 [dependencies]
 ansi-to-tui = "8"
 crossterm = "0.29"
+fuzzy-matcher = "0.3"
 ratatui = "0.30"
