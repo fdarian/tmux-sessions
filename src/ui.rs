@@ -128,7 +128,7 @@ fn render_confirmation(frame: &mut Frame, app: &App) {
         .unwrap_or_else(|| "item".to_string());
     let text = format!("Kill {}?\n[enter] confirm  [esc] cancel", label);
 
-    let area = centered_rect(50, 5, frame.area());
+    let area = centered_rect(44, 5, frame.area());
     frame.render_widget(Clear, area);
 
     let popup = Paragraph::new(text)
@@ -139,7 +139,7 @@ fn render_confirmation(frame: &mut Frame, app: &App) {
     frame.render_widget(popup, area);
 }
 
-fn centered_rect(width_percent: u16, height: u16, area: Rect) -> Rect {
+fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
     let vertical = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -152,9 +152,9 @@ fn centered_rect(width_percent: u16, height: u16, area: Rect) -> Rect {
     let horizontal = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Percentage((100 - width_percent) / 2),
-            Constraint::Percentage(width_percent),
-            Constraint::Percentage((100 - width_percent) / 2),
+            Constraint::Min(0),
+            Constraint::Length(width),
+            Constraint::Min(0),
         ])
         .split(vertical[1]);
 
