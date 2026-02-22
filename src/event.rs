@@ -64,8 +64,8 @@ pub fn map_key(key: KeyEvent, mode: &Mode) -> Action {
         Mode::Filtering => match (key.code, key.modifiers) {
             (KeyCode::Esc, _) => Action::ExitFilter,
             (KeyCode::Enter, _) => Action::Select,
-            (KeyCode::Up, _) => Action::MoveUp,
-            (KeyCode::Down, _) => Action::MoveDown,
+            (KeyCode::Up, _) | (KeyCode::Char('p'), KeyModifiers::CONTROL) => Action::MoveUp,
+            (KeyCode::Down, _) | (KeyCode::Char('n'), KeyModifiers::CONTROL) => Action::MoveDown,
             (KeyCode::Char('a'), KeyModifiers::CONTROL) => Action::FilterCursorStart,
             (KeyCode::Char('e'), KeyModifiers::CONTROL) => Action::FilterCursorEnd,
             (KeyCode::Char('u'), KeyModifiers::CONTROL) | (KeyCode::Backspace, KeyModifiers::SUPER) => Action::FilterKillLine,
