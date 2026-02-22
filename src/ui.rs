@@ -1,5 +1,5 @@
 use ansi_to_tui::IntoText;
-use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Style};
 use ratatui::text::Span;
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap};
@@ -74,9 +74,14 @@ fn render_preview(frame: &mut Frame, app: &App, area: Rect) {
     for (idx, preview_pane) in app.preview_panes.iter().enumerate() {
         let pane_area = pane_areas[idx];
 
-        let pane_block = Block::default().borders(Borders::ALL);
-        let pane_inner = pane_block.inner(pane_area);
-        frame.render_widget(pane_block, pane_area);
+        let pane_inner = if idx > 0 {
+            let pane_block = Block::default().borders(Borders::LEFT);
+            let inner = pane_block.inner(pane_area);
+            frame.render_widget(pane_block, pane_area);
+            inner
+        } else {
+            pane_area
+        };
 
         let content = preview_pane.content.as_slice().into_text().unwrap_or_default();
         let paragraph = Paragraph::new(content);
@@ -109,7 +114,8 @@ fn render_preview(frame: &mut Frame, app: &App, area: Rect) {
             frame.render_widget(Clear, label_area);
             frame.render_widget(label_block, label_area);
             frame.render_widget(
-                Paragraph::new(Span::styled(label_text.trim(), Style::default().fg(label_color))),
+                Paragraph::new(Span::styled(label_text.trim(), Style::default().fg(label_color)))
+                    .alignment(Alignment::Center),
                 label_inner,
             );
         }
