@@ -4,6 +4,7 @@ use std::io;
 use ratatui::style::{Color, Style};
 use ratatui::widgets::ListState;
 
+use crate::config;
 use crate::event::{Action, Mode};
 use crate::tmux;
 use crate::tree::{self, FlatEntry, NodeId};
@@ -15,6 +16,7 @@ pub struct PreviewPane {
 }
 
 pub struct App {
+    pub config: Option<config::Config>,
     pub sessions: Vec<tmux::Session>,
     pub windows: Vec<tmux::Window>,
     pub panes: Vec<tmux::Pane>,
@@ -32,7 +34,9 @@ pub struct App {
 
 impl App {
     pub fn new() -> io::Result<Self> {
-        let sessions = tmux::list_sessions()?;
+        let config = config::load_config()?;
+        let mut sessions = tmux::list_sessions()?;
+        config::apply_formatter_to_sessions(&mut sessions, &config);
         let windows = tmux::list_windows()?;
         let panes = tmux::list_panes()?;
 
@@ -79,6 +83,7 @@ impl App {
             .fg(mode_style.fg.unwrap_or(Color::Black));
 
         let mut app = App {
+            config,
             sessions,
             windows,
             panes,
@@ -99,6 +104,7 @@ impl App {
 
     pub fn refresh(&mut self) -> io::Result<()> {
         self.sessions = tmux::list_sessions()?;
+        config::apply_formatter_to_sessions(&mut self.sessions, &self.config);
         self.windows = tmux::list_windows()?;
         self.panes = tmux::list_panes()?;
 
@@ -132,7 +138,7 @@ impl App {
             NodeId::Session(session_id) => {
                 let session_name = self.sessions.iter()
                     .find(|s| s.id == *session_id)
-                    .map(|s| s.name.clone())
+                    .map(|s| s.display_name.clone())
                     .unwrap_or_else(|| session_id.clone());
                 self.preview_title = session_name;
 
@@ -351,7 +357,7 @@ impl App {
                     .sessions
                     .iter()
                     .find(|s| s.id == *id)
-                    .map(|s| s.name.as_str())
+                    .map(|s| s.display_name.as_str())
                     .unwrap_or(id);
                 format!("session \"{}\"", name)
             }
