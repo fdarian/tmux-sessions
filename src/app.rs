@@ -28,6 +28,7 @@ pub struct App {
     pub should_quit: bool,
     pub highlight_style: Style,
     pub primary_color: Color,
+    pub filter_query: String,
 }
 
 impl App {
@@ -78,6 +79,7 @@ impl App {
             should_quit: false,
             highlight_style,
             primary_color,
+            filter_query: String::new(),
         };
         app.update_preview();
         Ok(app)
@@ -100,7 +102,11 @@ impl App {
     }
 
     fn rebuild_flat_entries(&mut self) {
-        self.flat_entries = tree::flatten(&self.sessions, &self.windows, &self.panes, &self.opened);
+        if self.filter_query.is_empty() {
+            self.flat_entries = tree::flatten(&self.sessions, &self.windows, &self.panes, &self.opened);
+        } else {
+            self.flat_entries = tree::flatten_filtered(&self.sessions, &self.windows, &self.panes, &self.filter_query);
+        }
     }
 
     pub fn update_preview(&mut self) {
@@ -260,6 +266,32 @@ impl App {
             }
             Action::Refresh => {
                 let _ = self.refresh();
+            }
+            Action::EnterFilter => {
+                self.mode = Mode::Filtering;
+                self.filter_query = String::new();
+                self.list_state.select(Some(0));
+                self.rebuild_flat_entries();
+                self.update_preview();
+            }
+            Action::FilterChar(c) => {
+                self.filter_query.push(c);
+                self.rebuild_flat_entries();
+                self.list_state.select(Some(0));
+                self.update_preview();
+            }
+            Action::FilterBackspace => {
+                self.filter_query.pop();
+                self.rebuild_flat_entries();
+                self.list_state.select(Some(0));
+                self.update_preview();
+            }
+            Action::ExitFilter => {
+                self.filter_query = String::new();
+                self.mode = Mode::Normal;
+                self.rebuild_flat_entries();
+                self.list_state.select(Some(0));
+                self.update_preview();
             }
             Action::None => {}
         }

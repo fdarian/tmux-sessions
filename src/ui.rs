@@ -44,7 +44,19 @@ fn render_tree(frame: &mut Frame, app: &mut App, area: Rect) {
     let list = List::new(items)
         .highlight_style(app.highlight_style);
 
-    frame.render_stateful_widget(list, area, &mut app.list_state);
+    if app.mode == Mode::Filtering {
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(0), Constraint::Length(1)])
+            .split(area);
+        frame.render_stateful_widget(list, chunks[0], &mut app.list_state);
+        frame.render_widget(
+            Paragraph::new(format!("/ {}_", app.filter_query)),
+            chunks[1],
+        );
+    } else {
+        frame.render_stateful_widget(list, area, &mut app.list_state);
+    }
 }
 
 fn render_preview(frame: &mut Frame, app: &App, area: Rect) {
