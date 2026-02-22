@@ -2,6 +2,7 @@ mod app;
 mod event;
 mod tmux;
 mod tree;
+mod ui;
 
 use crossterm::event::{read, Event, KeyCode, KeyEventKind};
 use ratatui::{widgets::Paragraph, Frame};
