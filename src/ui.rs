@@ -1,5 +1,5 @@
+use ansi_to_tui::IntoText;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::style::{Modifier, Style};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap};
 use ratatui::Frame;
 
@@ -41,7 +41,7 @@ fn render_tree(frame: &mut Frame, app: &mut App, area: Rect) {
         .collect();
 
     let list = List::new(items)
-        .highlight_style(Style::default().add_modifier(Modifier::REVERSED));
+        .highlight_style(app.highlight_style);
 
     frame.render_stateful_widget(list, area, &mut app.list_state);
 }
@@ -52,7 +52,8 @@ fn render_preview(frame: &mut Frame, app: &App, area: Rect) {
         None => " Preview ".to_string(),
     };
 
-    let preview = Paragraph::new(app.preview_content.as_str())
+    let content = app.preview_content.as_slice().into_text().unwrap_or_default();
+    let preview = Paragraph::new(content)
         .block(Block::default().borders(Borders::ALL).title(title))
         .wrap(Wrap { trim: false });
 

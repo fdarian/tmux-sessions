@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::io;
 
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::ListState;
 
 use crate::event::{Action, Mode};
@@ -14,10 +15,12 @@ pub struct App {
     pub flat_entries: Vec<FlatEntry>,
     pub opened: HashSet<NodeId>,
     pub list_state: ListState,
-    pub preview_content: String,
+    pub preview_content: Vec<u8>,
     pub mode: Mode,
     pub confirming_node: Option<NodeId>,
     pub should_quit: bool,
+    pub highlight_style: Style,
+    pub primary_color: Color,
 }
 
 impl App {
@@ -45,6 +48,12 @@ impl App {
             .or_else(|| if flat_entries.is_empty() { None } else { Some(0) });
         list_state.select(initial_index);
 
+        let highlight_style = tmux::get_mode_style()
+            .ok()
+            .map(|s| tmux::parse_style(&s))
+            .unwrap_or_else(|| Style::default().add_modifier(Modifier::REVERSED));
+        let primary_color = highlight_style.bg.unwrap_or(Color::Yellow);
+
         let mut app = App {
             sessions,
             windows,
@@ -52,14 +61,14 @@ impl App {
             flat_entries,
             opened,
             list_state,
-            preview_content: String::new(),
+            preview_content: Vec::new(),
             mode: Mode::Normal,
             confirming_node: None,
             should_quit: false,
+            highlight_style,
+            primary_color,
         };
         app.update_preview();
-        Ok(app)
-    }
         Ok(app)
     }
 
@@ -87,7 +96,7 @@ impl App {
         let i = match self.list_state.selected() {
             Some(i) if i < self.flat_entries.len() => i,
             _ => {
-                self.preview_content.clear();
+                self.preview_content = Vec::new();
                 return;
             }
         };
@@ -95,8 +104,8 @@ impl App {
         let node_id = &self.flat_entries[i].node_id;
         let pane_id = tree::resolve_preview_pane_id(node_id, &self.windows, &self.panes);
         self.preview_content = match pane_id {
-            Some(id) => tmux::capture_pane(&id).unwrap_or_default(),
-            None => String::new(),
+            Some(id) => tmux::capture_pane_raw(&id).unwrap_or_default(),
+            None => Vec::new(),
         };
     }
 

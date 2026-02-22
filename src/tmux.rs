@@ -1,6 +1,8 @@
 use std::io;
 use std::process::Command;
 
+use ratatui::style::{Color, Modifier, Style};
+
 #[derive(Clone)]
 pub struct Session {
     pub id: String,
@@ -167,6 +169,78 @@ pub fn capture_pane(pane_id: &str) -> io::Result<String> {
         }
     }
     Ok(cleaned)
+}
+
+pub fn capture_pane_raw(pane_id: &str) -> io::Result<Vec<u8>> {
+    let output = Command::new("tmux")
+        .args(&["capture-pane", "-ep", "-t", pane_id])
+        .output()?;
+    if !output.status.success() {
+        return Err(io::Error::new(
+            io::ErrorKind::Other,
+            format!("tmux capture-pane failed for {}", pane_id),
+        ));
+    }
+    Ok(output.stdout)
+}
+
+pub fn get_mode_style() -> io::Result<String> {
+    run_tmux_output(&["show-options", "-gv", "mode-style"])
+        .map(|s| s.trim().to_string())
+}
+
+pub fn parse_style(style_str: &str) -> Style {
+    let mut style = Style::default();
+    for term in style_str.split(',') {
+        let term = term.trim();
+        if let Some(color_str) = term.strip_prefix("fg=") {
+            if let Some(color) = parse_color(color_str) {
+                style = style.fg(color);
+            }
+        } else if let Some(color_str) = term.strip_prefix("bg=") {
+            if let Some(color) = parse_color(color_str) {
+                style = style.bg(color);
+            }
+        } else {
+            match term {
+                "bold" => style = style.add_modifier(Modifier::BOLD),
+                "dim" => style = style.add_modifier(Modifier::DIM),
+                "reverse" => style = style.add_modifier(Modifier::REVERSED),
+                "italics" => style = style.add_modifier(Modifier::ITALIC),
+                _ => {}
+            }
+        }
+    }
+    style
+}
+
+fn parse_color(s: &str) -> Option<Color> {
+    if s == "default" {
+        return None;
+    }
+    if let Some(hex) = s.strip_prefix('#') {
+        if hex.len() == 6 {
+            let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+            let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+            let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+            return Some(Color::Rgb(r, g, b));
+        }
+        return None;
+    }
+    if let Some(num) = s.strip_prefix("colour") {
+        return num.parse::<u8>().ok().map(Color::Indexed);
+    }
+    match s {
+        "black" => Some(Color::Black),
+        "red" => Some(Color::Red),
+        "green" => Some(Color::Green),
+        "yellow" => Some(Color::Yellow),
+        "blue" => Some(Color::Blue),
+        "magenta" => Some(Color::Magenta),
+        "cyan" => Some(Color::Cyan),
+        "white" => Some(Color::White),
+        _ => None,
+    }
 }
 
 pub fn switch_client(target: &str) -> io::Result<()> {
