@@ -120,9 +120,10 @@ pub fn format_line(
     entry: &FlatEntry,
     line_index: usize,
     is_expanded: bool,
-    _key_width: usize,
+    key_width: usize,
 ) -> Line<'static> {
-    let mut result = format!("({}) ", line_index);
+    let key_str = format!("({})", line_index);
+    let mut result = format!("{:>width$} ", key_str, width = key_width);
 
     if entry.depth > 0 {
         // Ancestor columns: one 4-char column per ancestor level
