@@ -17,6 +17,7 @@ pub struct Window {
     pub name: String,
     pub active: bool,
     pub pane_title: String,
+    pub flags: String,
 }
 
 #[derive(Clone)]
@@ -27,6 +28,7 @@ pub struct Pane {
     pub index: usize,
     pub title: String,
     pub current_command: String,
+    pub active: bool,
 }
 
 fn run_tmux_output(args: &[&str]) -> io::Result<String> {
@@ -83,12 +85,12 @@ pub fn list_sessions() -> io::Result<Vec<Session>> {
 }
 
 pub fn list_windows() -> io::Result<Vec<Window>> {
-    let format = "#{session_id}\x1f#{window_id}\x1f#{window_index}\x1f#{window_name}\x1f#{window_active}\x1f#{pane_title}";
+    let format = "#{session_id}\x1f#{window_id}\x1f#{window_index}\x1f#{window_name}\x1f#{window_active}\x1f#{pane_title}\x1f#{window_flags}";
     let output = run_tmux_output(&["list-windows", "-a", "-F", format])?;
     let mut windows = Vec::new();
     for line in output.lines() {
-        let parts: Vec<&str> = line.splitn(6, '\x1f').collect();
-        if parts.len() != 6 {
+        let parts: Vec<&str> = line.splitn(7, '\x1f').collect();
+        if parts.len() != 7 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("unexpected field count in window line: {:?}", line),
@@ -107,18 +109,19 @@ pub fn list_windows() -> io::Result<Vec<Window>> {
             name: parts[3].to_string(),
             active: parts[4] != "0",
             pane_title: parts[5].to_string(),
+            flags: parts[6].to_string(),
         });
     }
     Ok(windows)
 }
 
 pub fn list_panes() -> io::Result<Vec<Pane>> {
-    let format = "#{session_id}\x1f#{window_id}\x1f#{pane_id}\x1f#{pane_index}\x1f#{pane_title}\x1f#{pane_current_command}";
+    let format = "#{session_id}\x1f#{window_id}\x1f#{pane_id}\x1f#{pane_index}\x1f#{pane_title}\x1f#{pane_current_command}\x1f#{pane_active}";
     let output = run_tmux_output(&["list-panes", "-a", "-F", format])?;
     let mut panes = Vec::new();
     for line in output.lines() {
-        let parts: Vec<&str> = line.splitn(6, '\x1f').collect();
-        if parts.len() != 6 {
+        let parts: Vec<&str> = line.splitn(7, '\x1f').collect();
+        if parts.len() != 7 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("unexpected field count in pane line: {:?}", line),
@@ -137,6 +140,7 @@ pub fn list_panes() -> io::Result<Vec<Pane>> {
             index,
             title: parts[4].to_string(),
             current_command: parts[5].to_string(),
+            active: parts[6] != "0",
         });
     }
     Ok(panes)
