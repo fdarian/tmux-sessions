@@ -1,5 +1,7 @@
 use ansi_to_tui::IntoText;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::style::{Color, Style};
+use ratatui::text::Span;
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap};
 use ratatui::Frame;
 
@@ -46,17 +48,68 @@ fn render_tree(frame: &mut Frame, app: &mut App, area: Rect) {
 }
 
 fn render_preview(frame: &mut Frame, app: &App, area: Rect) {
-    let title = match app.list_state.selected() {
-        Some(i) => format!(" {} (sort: index) ", i),
-        None => " Preview ".to_string(),
+    let title = if app.preview_title.is_empty() {
+        " Preview ".to_string()
+    } else {
+        format!(" {} ", app.preview_title)
     };
 
-    let content = app.preview_content.as_slice().into_text().unwrap_or_default();
-    let preview = Paragraph::new(content)
-        .block(Block::default().borders(Borders::ALL).title(title))
-        .wrap(Wrap { trim: false });
+    let outer_block = Block::default().borders(Borders::ALL).title(title);
+    let inner = outer_block.inner(area);
+    frame.render_widget(outer_block, area);
 
-    frame.render_widget(preview, area);
+    if app.preview_panes.is_empty() {
+        return;
+    }
+
+    let constraints: Vec<Constraint> = app.preview_panes.iter()
+        .map(|_| Constraint::Ratio(1, app.preview_panes.len() as u32))
+        .collect();
+
+    let pane_areas = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints(constraints)
+        .split(inner);
+
+    for (idx, preview_pane) in app.preview_panes.iter().enumerate() {
+        let pane_area = pane_areas[idx];
+
+        let content = preview_pane.content.as_slice().into_text().unwrap_or_default();
+        let paragraph = Paragraph::new(content);
+        frame.render_widget(paragraph, pane_area);
+
+        // Render label overlay in top-left corner
+        let label_text = format!(" {} ", preview_pane.label);
+        let label_width = label_text.len() as u16 + 2; // +2 for border
+        let label_height = 3u16; // top border + text + bottom border
+
+        if pane_area.width >= label_width && pane_area.height >= label_height {
+            let label_area = Rect::new(
+                pane_area.x,
+                pane_area.y,
+                label_width.min(pane_area.width),
+                label_height,
+            );
+
+            let label_color = if preview_pane.is_active {
+                app.primary_color
+            } else {
+                Color::DarkGray
+            };
+
+            let label_block = Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(label_color));
+
+            let label_inner = label_block.inner(label_area);
+            frame.render_widget(Clear, label_area);
+            frame.render_widget(label_block, label_area);
+            frame.render_widget(
+                Paragraph::new(Span::styled(label_text.trim(), Style::default().fg(label_color))),
+                label_inner,
+            );
+        }
+    }
 }
 
 fn render_confirmation(frame: &mut Frame, app: &App) {

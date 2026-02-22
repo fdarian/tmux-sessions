@@ -8,6 +8,12 @@ use crate::event::{Action, Mode};
 use crate::tmux;
 use crate::tree::{self, FlatEntry, NodeId};
 
+pub struct PreviewPane {
+    pub label: String,
+    pub content: Vec<u8>,
+    pub is_active: bool,
+}
+
 pub struct App {
     pub sessions: Vec<tmux::Session>,
     pub windows: Vec<tmux::Window>,
@@ -15,7 +21,8 @@ pub struct App {
     pub flat_entries: Vec<FlatEntry>,
     pub opened: HashSet<NodeId>,
     pub list_state: ListState,
-    pub preview_content: Vec<u8>,
+    pub preview_panes: Vec<PreviewPane>,
+    pub preview_title: String,
     pub mode: Mode,
     pub confirming_node: Option<NodeId>,
     pub should_quit: bool,
@@ -61,7 +68,8 @@ impl App {
             flat_entries,
             opened,
             list_state,
-            preview_content: Vec::new(),
+            preview_panes: Vec::new(),
+            preview_title: String::new(),
             mode: Mode::Normal,
             confirming_node: None,
             should_quit: false,
@@ -96,17 +104,81 @@ impl App {
         let i = match self.list_state.selected() {
             Some(i) if i < self.flat_entries.len() => i,
             _ => {
-                self.preview_content = Vec::new();
+                self.preview_panes.clear();
+                self.preview_title.clear();
                 return;
             }
         };
 
         let node_id = &self.flat_entries[i].node_id;
-        let pane_id = tree::resolve_preview_pane_id(node_id, &self.windows, &self.panes);
-        self.preview_content = match pane_id {
-            Some(id) => tmux::capture_pane_raw(&id).unwrap_or_default(),
-            None => Vec::new(),
-        };
+        match node_id {
+            NodeId::Session(session_id) => {
+                let session_name = self.sessions.iter()
+                    .find(|s| s.id == *session_id)
+                    .map(|s| s.name.clone())
+                    .unwrap_or_else(|| session_id.clone());
+                self.preview_title = session_name;
+
+                let session_windows: Vec<&tmux::Window> = self.windows.iter()
+                    .filter(|w| w.session_id == *session_id)
+                    .collect();
+
+                self.preview_panes = session_windows.iter().map(|window| {
+                    let pane_id = self.panes.iter()
+                        .find(|p| p.session_id == *session_id && p.window_id == window.id && p.active)
+                        .or_else(|| self.panes.iter().find(|p| p.session_id == *session_id && p.window_id == window.id))
+                        .map(|p| p.id.clone());
+
+                    let content = match pane_id {
+                        Some(id) => tmux::capture_pane_raw(&id).unwrap_or_default(),
+                        None => Vec::new(),
+                    };
+
+                    PreviewPane {
+                        label: format!("{}:{}", window.index, window.name),
+                        content,
+                        is_active: window.active,
+                    }
+                }).collect();
+            }
+            NodeId::Window(session_id, window_id) => {
+                let window = self.windows.iter().find(|w| w.id == *window_id);
+                self.preview_title = format!(" {} (sort: index) ", i);
+
+                let pane_id = self.panes.iter()
+                    .find(|p| p.session_id == *session_id && p.window_id == *window_id && p.active)
+                    .or_else(|| self.panes.iter().find(|p| p.session_id == *session_id && p.window_id == *window_id))
+                    .map(|p| p.id.clone());
+
+                let content = match pane_id {
+                    Some(id) => tmux::capture_pane_raw(&id).unwrap_or_default(),
+                    None => Vec::new(),
+                };
+
+                let label = window.map(|w| format!("{}:{}", w.index, w.name))
+                    .unwrap_or_else(|| format!("{}", i));
+
+                self.preview_panes = vec![PreviewPane {
+                    label,
+                    content,
+                    is_active: true,
+                }];
+            }
+            NodeId::Pane(session_id, window_id, pane_id) => {
+                self.preview_title = format!(" {} (sort: index) ", i);
+
+                let content = tmux::capture_pane_raw(pane_id).unwrap_or_default();
+                let pane = self.panes.iter().find(|p| p.id == *pane_id);
+                let label = pane.map(|p| format!("{}:{}", p.index, p.current_command))
+                    .unwrap_or_else(|| format!("{}", i));
+
+                self.preview_panes = vec![PreviewPane {
+                    label,
+                    content,
+                    is_active: true,
+                }];
+            }
+        }
     }
 
     pub fn handle_action(&mut self, action: Action) {
