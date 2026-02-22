@@ -10,13 +10,14 @@ use crate::tree;
 pub fn render(frame: &mut Frame, app: &mut App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(frame.area());
 
     render_tree(frame, app, chunks[0]);
     render_preview(frame, app, chunks[1]);
 
     if app.mode == Mode::Confirming {
+        render_confirmation(frame, app);
         render_confirmation(frame, app);
     }
 }

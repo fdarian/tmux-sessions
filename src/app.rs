@@ -35,9 +35,15 @@ impl App {
 
         let flat_entries = tree::flatten(&sessions, &windows, &panes, &opened);
         let mut list_state = ListState::default();
-        if !flat_entries.is_empty() {
-            list_state.select(Some(0));
-        }
+        let initial_index = flat_entries
+            .iter()
+            .position(|e| {
+                sessions.iter().any(|s| {
+                    s.attached && e.node_id == NodeId::Session(s.id.clone())
+                })
+            })
+            .or_else(|| if flat_entries.is_empty() { None } else { Some(0) });
+        list_state.select(initial_index);
 
         let mut app = App {
             sessions,
@@ -52,6 +58,8 @@ impl App {
             should_quit: false,
         };
         app.update_preview();
+        Ok(app)
+    }
         Ok(app)
     }
 
