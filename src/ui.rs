@@ -2,7 +2,7 @@ use ansi_to_tui::IntoText;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Style};
 use ratatui::text::Span;
-use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Padding, Paragraph, Wrap};
 use ratatui::Frame;
 
 use crate::app::App;
@@ -133,11 +133,11 @@ fn render_confirmation(frame: &mut Frame, app: &App) {
     };
     let text = format!("Kill {}?\n[enter] confirm  [esc] cancel", label);
 
-    let area = centered_rect(36, 5, frame.area());
+    let area = centered_rect(36, 6, frame.area());
     frame.render_widget(Clear, area);
 
     let popup = Paragraph::new(text)
-        .block(Block::default().borders(Borders::ALL).title("Confirm"))
+        .block(Block::default().borders(Borders::ALL).title("Confirm").padding(Padding::vertical(1)))
         .alignment(Alignment::Center)
         .wrap(Wrap { trim: false });
 
