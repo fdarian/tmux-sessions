@@ -1,3 +1,4 @@
+mod app;
 mod event;
 mod tmux;
 mod tree;
