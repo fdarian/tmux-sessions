@@ -1,4 +1,7 @@
-use crossterm::event::{self, Event, KeyCode, KeyEventKind};
+mod tmux;
+mod event;
+
+use crossterm::event::{read, Event, KeyCode, KeyEventKind};
 use ratatui::{widgets::Paragraph, Frame};
 
 fn main() {
@@ -11,7 +14,7 @@ fn main() {
             })
             .expect("failed to draw");
 
-        if let Ok(Event::Key(key)) = event::read() {
+        if let Ok(Event::Key(key)) = read() {
             if key.kind == KeyEventKind::Press && key.code == KeyCode::Char('q') {
                 break;
             }
