@@ -69,7 +69,7 @@ pub fn flatten(
                 depth: 1,
                 has_children,
                 is_last_sibling: window_is_last_sibling,
-                ancestor_is_last: vec![session_is_last_sibling],
+                ancestor_is_last: vec![],
                 text,
             });
 
@@ -106,7 +106,7 @@ pub fn flatten(
                     depth: 2,
                     has_children: false,
                     is_last_sibling: pane_is_last_sibling,
-                    ancestor_is_last: vec![session_is_last_sibling, window_is_last_sibling],
+                    ancestor_is_last: vec![window_is_last_sibling],
                     text,
                 });
             }
@@ -154,4 +154,3 @@ pub fn format_line(
 
     Line::raw(result)
 }
-
