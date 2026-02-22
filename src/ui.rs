@@ -126,13 +126,14 @@ fn render_confirmation(frame: &mut Frame, app: &App) {
     let label = app
         .confirming_label()
         .unwrap_or_else(|| "item".to_string());
-    let text = format!("Kill {}? (y/n)", label);
+    let text = format!("Kill {}?\n[enter] confirm  [esc] cancel", label);
 
     let area = centered_rect(50, 5, frame.area());
     frame.render_widget(Clear, area);
 
     let popup = Paragraph::new(text)
         .block(Block::default().borders(Borders::ALL).title("Confirm"))
+        .alignment(Alignment::Center)
         .wrap(Wrap { trim: false });
 
     frame.render_widget(popup, area);

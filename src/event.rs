@@ -41,8 +41,8 @@ pub fn map_key(key: KeyEvent, mode: &Mode) -> Action {
             _ => Action::None,
         },
         Mode::Confirming => match key.code {
-            KeyCode::Char('y') => Action::ConfirmKill,
-            KeyCode::Char('n') | KeyCode::Esc => Action::CancelKill,
+            KeyCode::Enter => Action::ConfirmKill,
+            KeyCode::Esc => Action::CancelKill,
             _ => Action::None,
         },
     }
