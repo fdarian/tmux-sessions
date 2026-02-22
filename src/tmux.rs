@@ -148,28 +148,6 @@ pub fn list_panes() -> io::Result<Vec<Pane>> {
     Ok(panes)
 }
 
-pub fn capture_pane(pane_id: &str) -> io::Result<String> {
-    let raw = run_tmux_output(&["capture-pane", "-ep", "-t", pane_id])?;
-    let mut cleaned = String::with_capacity(raw.len());
-    let mut chars = raw.chars().peekable();
-    while let Some(ch) = chars.next() {
-        if ch == '\x1b' {
-            if chars.peek() == Some(&'[') {
-                chars.next();
-                // skip until we hit a letter
-                for c in chars.by_ref() {
-                    if c.is_ascii_alphabetic() {
-                        break;
-                    }
-                }
-            }
-            // other escape sequences (non-CSI) are dropped
-        } else {
-            cleaned.push(ch);
-        }
-    }
-    Ok(cleaned)
-}
 
 pub fn capture_pane_raw(pane_id: &str) -> io::Result<Vec<u8>> {
     let output = Command::new("tmux")

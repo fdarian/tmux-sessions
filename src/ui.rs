@@ -18,7 +18,6 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     if app.mode == Mode::Confirming {
         render_confirmation(frame, app);
-        render_confirmation(frame, app);
     }
 }
 
