@@ -33,7 +33,8 @@ pub fn load_config() -> io::Result<Option<Config>> {
 }
 
 fn format_session_name(formatter: &str, raw_name: &str) -> io::Result<String> {
-    let output = Command::new(formatter).arg(raw_name).output()?;
+    let parts: Vec<&str> = formatter.split_whitespace().collect();
+    let output = Command::new(parts[0]).args(&parts[1..]).arg(raw_name).output()?;
     if !output.status.success() {
         return Err(io::Error::new(
             io::ErrorKind::Other,
