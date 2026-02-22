@@ -74,19 +74,23 @@ fn render_preview(frame: &mut Frame, app: &App, area: Rect) {
     for (idx, preview_pane) in app.preview_panes.iter().enumerate() {
         let pane_area = pane_areas[idx];
 
+        let pane_block = Block::default().borders(Borders::ALL);
+        let pane_inner = pane_block.inner(pane_area);
+        frame.render_widget(pane_block, pane_area);
+
         let content = preview_pane.content.as_slice().into_text().unwrap_or_default();
         let paragraph = Paragraph::new(content);
-        frame.render_widget(paragraph, pane_area);
+        frame.render_widget(paragraph, pane_inner);
 
-        // Render label overlay in top-left corner
+        // Render label overlay centered in the pane
         let label_text = format!(" {} ", preview_pane.label);
         let label_width = label_text.len() as u16 + 2; // +2 for border
         let label_height = 3u16; // top border + text + bottom border
 
         if pane_area.width >= label_width && pane_area.height >= label_height {
             let label_area = Rect::new(
-                pane_area.x,
-                pane_area.y,
+                pane_area.x + (pane_area.width.saturating_sub(label_width)) / 2,
+                pane_area.y + (pane_area.height.saturating_sub(label_height)) / 2,
                 label_width.min(pane_area.width),
                 label_height,
             );
@@ -99,7 +103,7 @@ fn render_preview(frame: &mut Frame, app: &App, area: Rect) {
 
             let label_block = Block::default()
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(label_color));
+                .border_style(Style::default().fg(Color::White));
 
             let label_inner = label_block.inner(label_area);
             frame.render_widget(Clear, label_area);

@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::io;
 
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Color, Style};
 use ratatui::widgets::ListState;
 
 use crate::event::{Action, Mode};
@@ -55,11 +55,14 @@ impl App {
             .or_else(|| if flat_entries.is_empty() { None } else { Some(0) });
         list_state.select(initial_index);
 
-        let highlight_style = tmux::get_mode_style()
+        let mode_style = tmux::get_mode_style()
             .ok()
             .map(|s| tmux::parse_style(&s))
-            .unwrap_or_else(|| Style::default().add_modifier(Modifier::REVERSED));
-        let primary_color = highlight_style.bg.unwrap_or(Color::Yellow);
+            .unwrap_or_default();
+        let primary_color = mode_style.bg.unwrap_or(Color::Yellow);
+        let highlight_style = Style::default()
+            .bg(primary_color)
+            .fg(mode_style.fg.unwrap_or(Color::Black));
 
         let mut app = App {
             sessions,
