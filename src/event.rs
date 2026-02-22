@@ -43,17 +43,19 @@ pub fn map_key(key: KeyEvent, mode: &Mode) -> Action {
     }
 
     match mode {
-        Mode::Normal => match key.code {
-            KeyCode::Char('q') => Action::Quit,
-            KeyCode::Char('k') | KeyCode::Up => Action::MoveUp,
-            KeyCode::Char('j') | KeyCode::Down => Action::MoveDown,
-            KeyCode::Char('h') | KeyCode::Left => Action::CollapseOrParent,
-            KeyCode::Char('l') | KeyCode::Right => Action::ExpandOrChild,
-            KeyCode::Char(' ') => Action::Toggle,
-            KeyCode::Enter => Action::Select,
-            KeyCode::Char('x') => Action::Kill,
-            KeyCode::Char('r') => Action::Refresh,
-            KeyCode::Char('/') => Action::EnterFilter,
+        Mode::Normal => match (key.code, key.modifiers) {
+            (KeyCode::Char('q'), _) => Action::Quit,
+            (KeyCode::Char('k'), _) | (KeyCode::Up, _) => Action::MoveUp,
+            (KeyCode::Char('p'), KeyModifiers::CONTROL) => Action::MoveUp,
+            (KeyCode::Char('j'), _) | (KeyCode::Down, _) => Action::MoveDown,
+            (KeyCode::Char('n'), KeyModifiers::CONTROL) => Action::MoveDown,
+            (KeyCode::Char('h'), _) | (KeyCode::Left, _) => Action::CollapseOrParent,
+            (KeyCode::Char('l'), _) | (KeyCode::Right, _) => Action::ExpandOrChild,
+            (KeyCode::Char(' '), _) => Action::Toggle,
+            (KeyCode::Enter, _) => Action::Select,
+            (KeyCode::Char('x'), _) => Action::Kill,
+            (KeyCode::Char('r'), _) => Action::Refresh,
+            (KeyCode::Char('/'), _) => Action::EnterFilter,
             _ => Action::None,
         },
         Mode::Confirming => match key.code {
