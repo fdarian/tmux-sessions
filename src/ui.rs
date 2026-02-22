@@ -126,9 +126,14 @@ fn render_confirmation(frame: &mut Frame, app: &App) {
     let label = app
         .confirming_label()
         .unwrap_or_else(|| "item".to_string());
+    let label = if label.len() > 24 {
+        format!("{}...", &label[..21])
+    } else {
+        label
+    };
     let text = format!("Kill {}?\n[enter] confirm  [esc] cancel", label);
 
-    let area = centered_rect(44, 5, frame.area());
+    let area = centered_rect(36, 5, frame.area());
     frame.render_widget(Clear, area);
 
     let popup = Paragraph::new(text)
