@@ -130,15 +130,15 @@ pub fn format_line(
             if entry.ancestor_is_last[d as usize] {
                 result.push_str("    ");
             } else {
-                result.push_str(" \u{2502}  ");
+                result.push_str("\u{2502}   ");
             }
         }
 
         // Immediate connector for this node
         if entry.is_last_sibling {
-            result.push_str(" \u{2514}> ");
+            result.push_str("\u{2514}\u{2500}> ");
         } else {
-            result.push_str(" \u{251C}> ");
+            result.push_str("\u{251C}\u{2500}> ");
         }
     }
 
