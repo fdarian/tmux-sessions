@@ -1,17 +1,19 @@
+use std::collections::HashSet;
 use std::io;
 
-use tui_tree_widget::{TreeItem, TreeState};
+use ratatui::widgets::ListState;
 
 use crate::event::{Action, Mode};
 use crate::tmux;
-use crate::tree::{self, NodeId};
+use crate::tree::{self, FlatEntry, NodeId};
 
 pub struct App {
     pub sessions: Vec<tmux::Session>,
     pub windows: Vec<tmux::Window>,
     pub panes: Vec<tmux::Pane>,
-    pub tree_items: Vec<TreeItem<'static, NodeId>>,
-    pub tree_state: TreeState<NodeId>,
+    pub flat_entries: Vec<FlatEntry>,
+    pub opened: HashSet<NodeId>,
+    pub list_state: ListState,
     pub preview_content: String,
     pub mode: Mode,
     pub confirming_node: Option<NodeId>,
@@ -23,17 +25,27 @@ impl App {
         let sessions = tmux::list_sessions()?;
         let windows = tmux::list_windows()?;
         let panes = tmux::list_panes()?;
-        let tree_items = tree::build_tree_items(&sessions, &windows, &panes);
 
-        let mut tree_state = TreeState::default();
-        tree_state.select_first();
+        let mut opened = HashSet::new();
+        for session in &sessions {
+            if session.attached {
+                opened.insert(NodeId::Session(session.id.clone()));
+            }
+        }
+
+        let flat_entries = tree::flatten(&sessions, &windows, &panes, &opened);
+        let mut list_state = ListState::default();
+        if !flat_entries.is_empty() {
+            list_state.select(Some(0));
+        }
 
         let mut app = App {
             sessions,
             windows,
             panes,
-            tree_items,
-            tree_state,
+            flat_entries,
+            opened,
+            list_state,
             preview_content: String::new(),
             mode: Mode::Normal,
             confirming_node: None,
@@ -47,26 +59,32 @@ impl App {
         self.sessions = tmux::list_sessions()?;
         self.windows = tmux::list_windows()?;
         self.panes = tmux::list_panes()?;
-        self.tree_items = tree::build_tree_items(&self.sessions, &self.windows, &self.panes);
 
         if self.sessions.is_empty() {
             self.should_quit = true;
             return Ok(());
         }
 
-        self.tree_state.select_first();
+        self.rebuild_flat_entries();
+        self.list_state.select(Some(0));
         self.update_preview();
         Ok(())
     }
 
-    pub fn update_preview(&mut self) {
-        let selected = self.tree_state.selected();
-        if selected.is_empty() {
-            self.preview_content.clear();
-            return;
-        }
+    fn rebuild_flat_entries(&mut self) {
+        self.flat_entries = tree::flatten(&self.sessions, &self.windows, &self.panes, &self.opened);
+    }
 
-        let node_id = &selected[selected.len() - 1];
+    pub fn update_preview(&mut self) {
+        let i = match self.list_state.selected() {
+            Some(i) if i < self.flat_entries.len() => i,
+            _ => {
+                self.preview_content.clear();
+                return;
+            }
+        };
+
+        let node_id = &self.flat_entries[i].node_id;
         let pane_id = tree::resolve_preview_pane_id(node_id, &self.windows, &self.panes);
         self.preview_content = match pane_id {
             Some(id) => tmux::capture_pane(&id).unwrap_or_default(),
@@ -78,23 +96,68 @@ impl App {
         match action {
             Action::Quit => self.should_quit = true,
             Action::MoveUp => {
-                self.tree_state.key_up();
-                self.update_preview();
+                if let Some(i) = self.list_state.selected() {
+                    if i > 0 {
+                        self.list_state.select(Some(i - 1));
+                        self.update_preview();
+                    }
+                }
             }
             Action::MoveDown => {
-                self.tree_state.key_down();
-                self.update_preview();
+                if let Some(i) = self.list_state.selected() {
+                    if i + 1 < self.flat_entries.len() {
+                        self.list_state.select(Some(i + 1));
+                        self.update_preview();
+                    }
+                }
             }
             Action::CollapseOrParent => {
-                self.tree_state.key_left();
-                self.update_preview();
+                if let Some(i) = self.list_state.selected() {
+                    let node_id = self.flat_entries[i].node_id.clone();
+                    if self.flat_entries[i].has_children && self.opened.contains(&node_id) {
+                        self.opened.remove(&node_id);
+                        self.rebuild_flat_entries();
+                    } else {
+                        self.move_to_parent(i);
+                    }
+                    self.update_preview();
+                }
             }
             Action::ExpandOrChild => {
-                self.tree_state.key_right();
-                self.update_preview();
+                if let Some(i) = self.list_state.selected() {
+                    let entry_has_children = self.flat_entries[i].has_children;
+                    let entry_depth = self.flat_entries[i].depth;
+                    let node_id = self.flat_entries[i].node_id.clone();
+                    if entry_has_children {
+                        if !self.opened.contains(&node_id) {
+                            self.opened.insert(node_id);
+                            self.rebuild_flat_entries();
+                        }
+                        if i + 1 < self.flat_entries.len()
+                            && self.flat_entries[i + 1].depth > entry_depth
+                        {
+                            self.list_state.select(Some(i + 1));
+                        }
+                    }
+                    self.update_preview();
+                }
             }
             Action::Toggle => {
-                self.tree_state.toggle_selected();
+                if let Some(i) = self.list_state.selected() {
+                    if self.flat_entries[i].has_children {
+                        let node_id = self.flat_entries[i].node_id.clone();
+                        if self.opened.contains(&node_id) {
+                            self.opened.remove(&node_id);
+                        } else {
+                            self.opened.insert(node_id);
+                        }
+                        self.rebuild_flat_entries();
+                        if i >= self.flat_entries.len() {
+                            self.list_state
+                                .select(Some(self.flat_entries.len().saturating_sub(1)));
+                        }
+                    }
+                }
             }
             Action::Select => self.select_current(),
             Action::Kill => self.start_kill(),
@@ -110,24 +173,33 @@ impl App {
         }
     }
 
-    fn select_current(&mut self) {
-        let selected = self.tree_state.selected();
-        if selected.is_empty() {
+    fn move_to_parent(&mut self, current_index: usize) {
+        let current_depth = self.flat_entries[current_index].depth;
+        if current_depth == 0 {
             return;
         }
+        for j in (0..current_index).rev() {
+            if self.flat_entries[j].depth < current_depth {
+                self.list_state.select(Some(j));
+                return;
+            }
+        }
+    }
 
-        let node_id = &selected[selected.len() - 1];
+    fn select_current(&mut self) {
+        let i = match self.list_state.selected() {
+            Some(i) if i < self.flat_entries.len() => i,
+            _ => return,
+        };
+
+        let node_id = &self.flat_entries[i].node_id;
         let result = match node_id {
             NodeId::Session(id) => tmux::switch_client(id),
-            NodeId::Window(session_id, window_id) => {
-                tmux::switch_client(session_id)
-                    .and_then(|_| tmux::select_window(window_id))
-            }
-            NodeId::Pane(session_id, window_id, pane_id) => {
-                tmux::switch_client(session_id)
-                    .and_then(|_| tmux::select_window(window_id))
-                    .and_then(|_| tmux::select_pane(pane_id))
-            }
+            NodeId::Window(session_id, window_id) => tmux::switch_client(session_id)
+                .and_then(|_| tmux::select_window(window_id)),
+            NodeId::Pane(session_id, window_id, pane_id) => tmux::switch_client(session_id)
+                .and_then(|_| tmux::select_window(window_id))
+                .and_then(|_| tmux::select_pane(pane_id)),
         };
 
         if result.is_ok() {
@@ -136,13 +208,12 @@ impl App {
     }
 
     fn start_kill(&mut self) {
-        let selected = self.tree_state.selected();
-        if selected.is_empty() {
-            return;
-        }
+        let i = match self.list_state.selected() {
+            Some(i) if i < self.flat_entries.len() => i,
+            _ => return,
+        };
 
-        let node_id = selected[selected.len() - 1].clone();
-        self.confirming_node = Some(node_id);
+        self.confirming_node = Some(self.flat_entries[i].node_id.clone());
         self.mode = Mode::Confirming;
     }
 

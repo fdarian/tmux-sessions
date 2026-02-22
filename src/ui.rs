@@ -1,15 +1,15 @@
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Modifier, Style};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap};
 use ratatui::Frame;
-use tui_tree_widget::Tree;
 
 use crate::app::App;
 use crate::event::Mode;
+use crate::tree;
 
 pub fn render(frame: &mut Frame, app: &mut App) {
     let chunks = Layout::default()
-        .direction(Direction::Horizontal)
+        .direction(Direction::Vertical)
         .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
         .split(frame.area());
 
@@ -22,18 +22,37 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 }
 
 fn render_tree(frame: &mut Frame, app: &mut App, area: Rect) {
-    let tree = Tree::new(&app.tree_items)
-        .expect("duplicate root node id")
-        .block(Block::default().borders(Borders::ALL).title("Sessions"))
-        .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
-        .highlight_symbol("▶ ");
+    let key_width = if app.flat_entries.is_empty() {
+        3
+    } else {
+        format!("({})", app.flat_entries.len() - 1).len()
+    };
 
-    frame.render_stateful_widget(tree, area, &mut app.tree_state);
+    let items: Vec<ListItem> = app
+        .flat_entries
+        .iter()
+        .enumerate()
+        .map(|(i, entry)| {
+            let is_expanded = app.opened.contains(&entry.node_id);
+            let line = tree::format_line(entry, i, is_expanded, key_width);
+            ListItem::new(line)
+        })
+        .collect();
+
+    let list = List::new(items)
+        .highlight_style(Style::default().add_modifier(Modifier::REVERSED));
+
+    frame.render_stateful_widget(list, area, &mut app.list_state);
 }
 
 fn render_preview(frame: &mut Frame, app: &App, area: Rect) {
+    let title = match app.list_state.selected() {
+        Some(i) => format!(" {} (sort: index) ", i),
+        None => " Preview ".to_string(),
+    };
+
     let preview = Paragraph::new(app.preview_content.as_str())
-        .block(Block::default().borders(Borders::ALL).title("Preview"))
+        .block(Block::default().borders(Borders::ALL).title(title))
         .wrap(Wrap { trim: false });
 
     frame.render_widget(preview, area);
