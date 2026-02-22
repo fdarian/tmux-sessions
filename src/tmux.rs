@@ -7,6 +7,7 @@ use ratatui::style::{Color, Modifier, Style};
 pub struct Session {
     pub id: String,
     pub name: String,
+    pub display_name: String,
     pub window_count: usize,
     pub attached: bool,
 }
@@ -79,6 +80,7 @@ pub fn list_sessions() -> io::Result<Vec<Session>> {
         sessions.push(Session {
             id: parts[0].to_string(),
             name: parts[1].to_string(),
+            display_name: parts[1].to_string(),
             window_count,
             attached: parts[3] != "0",
         });

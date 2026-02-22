@@ -32,7 +32,7 @@ pub fn flatten(
         let session_is_last_sibling = si == sessions.len() - 1;
         let has_children = windows.iter().any(|w| w.session_id == session.id);
 
-        let mut text = format!("{}: {} windows", session.name, session.window_count);
+        let mut text = format!("{}: {} windows", session.display_name, session.window_count);
         if session.attached {
             text.push_str(" (attached)");
         }
