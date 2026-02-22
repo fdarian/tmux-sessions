@@ -40,6 +40,11 @@ impl App {
         for session in &sessions {
             if session.attached {
                 opened.insert(NodeId::Session(session.id.clone()));
+                for window in &windows {
+                    if window.session_id == session.id && window.active {
+                        opened.insert(NodeId::Window(session.id.clone(), window.id.clone()));
+                    }
+                }
             }
         }
 
@@ -48,8 +53,17 @@ impl App {
         let initial_index = flat_entries
             .iter()
             .position(|e| {
-                sessions.iter().any(|s| {
-                    s.attached && e.node_id == NodeId::Session(s.id.clone())
+                sessions.iter().any(|s| s.attached && {
+                    windows.iter().any(|w| {
+                        w.session_id == s.id
+                            && w.active
+                            && e.node_id == NodeId::Window(s.id.clone(), w.id.clone())
+                    })
+                })
+            })
+            .or_else(|| {
+                flat_entries.iter().position(|e| {
+                    sessions.iter().any(|s| s.attached && e.node_id == NodeId::Session(s.id.clone()))
                 })
             })
             .or_else(|| if flat_entries.is_empty() { None } else { Some(0) });
