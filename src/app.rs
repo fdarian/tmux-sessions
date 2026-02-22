@@ -29,6 +29,7 @@ pub struct App {
     pub highlight_style: Style,
     pub primary_color: Color,
     pub filter_query: String,
+    pub filter_cursor: usize,
 }
 
 impl App {
@@ -80,6 +81,7 @@ impl App {
             highlight_style,
             primary_color,
             filter_query: String::new(),
+            filter_cursor: 0,
         };
         app.update_preview();
         Ok(app)
@@ -270,45 +272,143 @@ impl App {
             Action::EnterFilter => {
                 self.mode = Mode::Filtering;
                 self.filter_query = String::new();
+                self.filter_cursor = 0;
                 self.list_state.select(Some(0));
                 self.rebuild_flat_entries();
                 self.update_preview();
             }
             Action::FilterChar(c) => {
-                self.filter_query.push(c);
+                let byte_offset = self.filter_query.char_indices()
+                    .nth(self.filter_cursor)
+                    .map(|(i, _)| i)
+                    .unwrap_or(self.filter_query.len());
+                self.filter_query.insert(byte_offset, c);
+                self.filter_cursor += 1;
                 self.rebuild_flat_entries();
                 self.list_state.select(Some(0));
                 self.update_preview();
             }
             Action::FilterBackspace => {
-                self.filter_query.pop();
-                self.rebuild_flat_entries();
-                self.list_state.select(Some(0));
-                self.update_preview();
+                if self.filter_cursor > 0 {
+                    let byte_before = self.filter_query.char_indices()
+                        .nth(self.filter_cursor - 1)
+                        .map(|(i, _)| i)
+                        .unwrap_or(self.filter_query.len());
+                    let byte_at = self.filter_query.char_indices()
+                        .nth(self.filter_cursor)
+                        .map(|(i, _)| i)
+                        .unwrap_or(self.filter_query.len());
+                    self.filter_query.drain(byte_before..byte_at);
+                    self.filter_cursor -= 1;
+                    self.rebuild_flat_entries();
+                    self.list_state.select(Some(0));
+                    self.update_preview();
+                }
+            }
+            Action::FilterDeleteForward => {
+                let len = self.filter_query.chars().count();
+                if self.filter_cursor < len {
+                    let byte_at = self.filter_query.char_indices()
+                        .nth(self.filter_cursor)
+                        .map(|(i, _)| i)
+                        .unwrap_or(self.filter_query.len());
+                    let byte_next = self.filter_query.char_indices()
+                        .nth(self.filter_cursor + 1)
+                        .map(|(i, _)| i)
+                        .unwrap_or(self.filter_query.len());
+                    self.filter_query.drain(byte_at..byte_next);
+                    self.rebuild_flat_entries();
+                    self.list_state.select(Some(0));
+                    self.update_preview();
+                }
             }
             Action::FilterKillWord => {
                 let chars: Vec<char> = self.filter_query.chars().collect();
-                let mut pos = chars.len();
+                let mut pos = self.filter_cursor;
                 while pos > 0 && chars[pos - 1].is_whitespace() {
                     pos -= 1;
                 }
                 while pos > 0 && !chars[pos - 1].is_whitespace() {
                     pos -= 1;
                 }
-                self.filter_query = chars[..pos].iter().collect();
+                let start_byte = self.filter_query.char_indices()
+                    .nth(pos)
+                    .map(|(i, _)| i)
+                    .unwrap_or(self.filter_query.len());
+                let end_byte = self.filter_query.char_indices()
+                    .nth(self.filter_cursor)
+                    .map(|(i, _)| i)
+                    .unwrap_or(self.filter_query.len());
+                self.filter_query.drain(start_byte..end_byte);
+                self.filter_cursor = pos;
                 self.rebuild_flat_entries();
                 self.list_state.select(Some(0));
                 self.update_preview();
             }
             Action::FilterKillLine => {
-                self.filter_query.clear();
+                let byte_offset = self.filter_query.char_indices()
+                    .nth(self.filter_cursor)
+                    .map(|(i, _)| i)
+                    .unwrap_or(self.filter_query.len());
+                self.filter_query.drain(..byte_offset);
+                self.filter_cursor = 0;
                 self.rebuild_flat_entries();
                 self.list_state.select(Some(0));
                 self.update_preview();
             }
-
+            Action::FilterKillLineForward => {
+                let byte_offset = self.filter_query.char_indices()
+                    .nth(self.filter_cursor)
+                    .map(|(i, _)| i)
+                    .unwrap_or(self.filter_query.len());
+                self.filter_query.truncate(byte_offset);
+                self.rebuild_flat_entries();
+                self.list_state.select(Some(0));
+                self.update_preview();
+            }
+            Action::FilterCursorLeft => {
+                if self.filter_cursor > 0 {
+                    self.filter_cursor -= 1;
+                }
+            }
+            Action::FilterCursorRight => {
+                let len = self.filter_query.chars().count();
+                if self.filter_cursor < len {
+                    self.filter_cursor += 1;
+                }
+            }
+            Action::FilterCursorWordLeft => {
+                let chars: Vec<char> = self.filter_query.chars().collect();
+                let mut pos = self.filter_cursor;
+                while pos > 0 && chars[pos - 1].is_whitespace() {
+                    pos -= 1;
+                }
+                while pos > 0 && !chars[pos - 1].is_whitespace() {
+                    pos -= 1;
+                }
+                self.filter_cursor = pos;
+            }
+            Action::FilterCursorWordRight => {
+                let chars: Vec<char> = self.filter_query.chars().collect();
+                let len = chars.len();
+                let mut pos = self.filter_cursor;
+                while pos < len && !chars[pos].is_whitespace() {
+                    pos += 1;
+                }
+                while pos < len && chars[pos].is_whitespace() {
+                    pos += 1;
+                }
+                self.filter_cursor = pos;
+            }
+            Action::FilterCursorStart => {
+                self.filter_cursor = 0;
+            }
+            Action::FilterCursorEnd => {
+                self.filter_cursor = self.filter_query.chars().count();
+            }
             Action::ExitFilter => {
                 self.filter_query = String::new();
+                self.filter_cursor = 0;
                 self.mode = Mode::Normal;
                 self.rebuild_flat_entries();
                 self.list_state.select(Some(0));

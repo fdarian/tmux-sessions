@@ -50,10 +50,30 @@ fn render_tree(frame: &mut Frame, app: &mut App, area: Rect) {
             .constraints([Constraint::Min(0), Constraint::Length(1)])
             .split(area);
         frame.render_stateful_widget(list, chunks[0], &mut app.list_state);
-        frame.render_widget(
-            Paragraph::new(format!("/ {}_", app.filter_query)),
-            chunks[1],
-        );
+
+        let chars: Vec<char> = app.filter_query.chars().collect();
+        let before: String = chars[..app.filter_cursor].iter().collect();
+        let cursor_char = if app.filter_cursor < chars.len() {
+            chars[app.filter_cursor].to_string()
+        } else {
+            " ".to_string()
+        };
+        let after: String = if app.filter_cursor < chars.len() {
+            chars[app.filter_cursor + 1..].iter().collect()
+        } else {
+            String::new()
+        };
+        let filter_line = ratatui::text::Line::from(vec![
+            ratatui::text::Span::raw(format!("/ {}", before)),
+            ratatui::text::Span::styled(
+                cursor_char,
+                ratatui::style::Style::default()
+                    .bg(ratatui::style::Color::White)
+                    .fg(ratatui::style::Color::Black),
+            ),
+            ratatui::text::Span::raw(after),
+        ]);
+        frame.render_widget(Paragraph::new(filter_line), chunks[1]);
     } else {
         frame.render_stateful_widget(list, area, &mut app.list_state);
     }
