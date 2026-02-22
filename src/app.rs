@@ -164,7 +164,7 @@ impl App {
                     is_active: true,
                 }];
             }
-            NodeId::Pane(session_id, window_id, pane_id) => {
+            NodeId::Pane(_session_id, _window_id, pane_id) => {
                 self.preview_title = format!(" {} (sort: index) ", i);
 
                 let content = tmux::capture_pane_raw(pane_id).unwrap_or_default();

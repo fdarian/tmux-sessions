@@ -155,23 +155,3 @@ pub fn format_line(
     Line::raw(result)
 }
 
-pub fn resolve_preview_pane_id(
-    selected: &NodeId,
-    windows: &[tmux::Window],
-    panes: &[tmux::Pane],
-) -> Option<String> {
-    match selected {
-        NodeId::Pane(_, _, pane_id) => Some(pane_id.clone()),
-        NodeId::Window(session_id, window_id) => panes
-            .iter()
-            .find(|p| p.session_id == *session_id && p.window_id == *window_id)
-            .map(|p| p.id.clone()),
-        NodeId::Session(session_id) => {
-            let first_window = windows.iter().find(|w| w.session_id == *session_id)?;
-            panes
-                .iter()
-                .find(|p| p.session_id == *session_id && p.window_id == first_window.id)
-                .map(|p| p.id.clone())
-        }
-    }
-}
