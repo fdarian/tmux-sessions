@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 
+use fuzzy_matcher::FuzzyMatcher;
 use ratatui::text::Line;
 
 use crate::tmux;
@@ -114,6 +115,92 @@ pub fn flatten(
     }
 
     entries
+}
+
+pub fn flatten_filtered(
+    sessions: &[tmux::Session],
+    windows: &[tmux::Window],
+    panes: &[tmux::Pane],
+    query: &str,
+) -> Vec<FlatEntry> {
+    let matcher = fuzzy_matcher::skim::SkimMatcherV2::default();
+    let mut scored: Vec<(i64, FlatEntry)> = Vec::new();
+
+    for session in sessions.iter() {
+        let mut text = format!("{}: {} windows", session.name, session.window_count);
+        if session.attached {
+            text.push_str(" (attached)");
+        }
+
+        if let Some(score) = matcher.fuzzy_match(&text, query) {
+            scored.push((score, FlatEntry {
+                node_id: NodeId::Session(session.id.clone()),
+                depth: 0,
+                has_children: false,
+                is_last_sibling: false,
+                ancestor_is_last: vec![],
+                text,
+            }));
+        }
+
+        let session_windows: Vec<&tmux::Window> =
+            windows.iter().filter(|w| w.session_id == session.id).collect();
+
+        for window in session_windows.iter() {
+            let text = format!(
+                "{}: {}{}: \"{}\"",
+                window.index, window.name, window.flags, window.pane_title
+            );
+
+            if let Some(score) = matcher.fuzzy_match(&text, query) {
+                scored.push((score, FlatEntry {
+                    node_id: NodeId::Window(session.id.clone(), window.id.clone()),
+                    depth: 0,
+                    has_children: false,
+                    is_last_sibling: false,
+                    ancestor_is_last: vec![],
+                    text,
+                }));
+            }
+
+            let window_panes: Vec<&tmux::Pane> = panes
+                .iter()
+                .filter(|p| p.session_id == session.id && p.window_id == window.id)
+                .collect();
+
+            for pane in window_panes.iter() {
+                let text = if pane.active {
+                    format!(
+                        "{}: {}*: \"{}\"",
+                        pane.index, pane.current_command, pane.title
+                    )
+                } else {
+                    format!(
+                        "{}: {}: \"{}\"",
+                        pane.index, pane.current_command, pane.title
+                    )
+                };
+
+                if let Some(score) = matcher.fuzzy_match(&text, query) {
+                    scored.push((score, FlatEntry {
+                        node_id: NodeId::Pane(
+                            session.id.clone(),
+                            window.id.clone(),
+                            pane.id.clone(),
+                        ),
+                        depth: 0,
+                        has_children: false,
+                        is_last_sibling: false,
+                        ancestor_is_last: vec![],
+                        text,
+                    }));
+                }
+            }
+        }
+    }
+
+    scored.sort_by(|a, b| b.0.cmp(&a.0));
+    scored.into_iter().map(|(_, entry)| entry).collect()
 }
 
 pub fn format_line(

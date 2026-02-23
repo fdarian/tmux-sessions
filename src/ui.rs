@@ -44,7 +44,39 @@ fn render_tree(frame: &mut Frame, app: &mut App, area: Rect) {
     let list = List::new(items)
         .highlight_style(app.highlight_style);
 
-    frame.render_stateful_widget(list, area, &mut app.list_state);
+    if app.mode == Mode::Filtering {
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(0), Constraint::Length(1)])
+            .split(area);
+        frame.render_stateful_widget(list, chunks[0], &mut app.list_state);
+
+        let chars: Vec<char> = app.filter_query.chars().collect();
+        let before: String = chars[..app.filter_cursor].iter().collect();
+        let cursor_char = if app.filter_cursor < chars.len() {
+            chars[app.filter_cursor].to_string()
+        } else {
+            " ".to_string()
+        };
+        let after: String = if app.filter_cursor < chars.len() {
+            chars[app.filter_cursor + 1..].iter().collect()
+        } else {
+            String::new()
+        };
+        let filter_line = ratatui::text::Line::from(vec![
+            ratatui::text::Span::raw(format!("/ {}", before)),
+            ratatui::text::Span::styled(
+                cursor_char,
+                ratatui::style::Style::default()
+                    .bg(ratatui::style::Color::White)
+                    .fg(ratatui::style::Color::Black),
+            ),
+            ratatui::text::Span::raw(after),
+        ]);
+        frame.render_widget(Paragraph::new(filter_line), chunks[1]);
+    } else {
+        frame.render_stateful_widget(list, area, &mut app.list_state);
+    }
 }
 
 fn render_preview(frame: &mut Frame, app: &App, area: Rect) {
