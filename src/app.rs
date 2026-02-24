@@ -241,7 +241,20 @@ impl App {
                         self.opened.remove(&node_id);
                         self.rebuild_flat_entries();
                     } else {
-                        self.move_to_parent(i);
+                        let current_depth = self.flat_entries[i].depth;
+                        if current_depth > 0 {
+                            for j in (0..i).rev() {
+                                if self.flat_entries[j].depth < current_depth {
+                                    let parent_node_id = self.flat_entries[j].node_id.clone();
+                                    self.opened.remove(&parent_node_id);
+                                    self.rebuild_flat_entries();
+                                    if let Some(new_i) = self.flat_entries.iter().position(|e| e.node_id == parent_node_id) {
+                                        self.list_state.select(Some(new_i));
+                                    }
+                                    break;
+                                }
+                            }
+                        }
                     }
                     self.update_preview();
                 }
@@ -444,19 +457,6 @@ impl App {
                 }
             }
             Action::None => {}
-        }
-    }
-
-    fn move_to_parent(&mut self, current_index: usize) {
-        let current_depth = self.flat_entries[current_index].depth;
-        if current_depth == 0 {
-            return;
-        }
-        for j in (0..current_index).rev() {
-            if self.flat_entries[j].depth < current_depth {
-                self.list_state.select(Some(j));
-                return;
-            }
         }
     }
 
