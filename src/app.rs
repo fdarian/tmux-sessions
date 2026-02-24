@@ -48,11 +48,6 @@ impl App {
         for session in &sessions {
             if session.attached {
                 opened.insert(NodeId::Session(session.id.clone()));
-                for window in &windows {
-                    if window.session_id == session.id && window.active {
-                        opened.insert(NodeId::Window(session.id.clone(), window.id.clone()));
-                    }
-                }
             }
         }
 
