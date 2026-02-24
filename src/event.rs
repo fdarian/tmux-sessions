@@ -26,6 +26,7 @@ pub enum Action {
     FilterCursorWordRight,
     FilterCursorStart,
     FilterCursorEnd,
+    SelectIndex(usize),
     ExitFilter,
     None,
 }
@@ -56,6 +57,10 @@ pub fn map_key(key: KeyEvent, mode: &Mode) -> Action {
             (KeyCode::Char('x'), _) => Action::Kill,
             (KeyCode::Char('r'), _) => Action::Refresh,
             (KeyCode::Char('/'), _) => Action::EnterFilter,
+            (KeyCode::Char(c @ '0'..='9'), _) => Action::SelectIndex((c as u8 - b'0') as usize),
+            (KeyCode::Char(c @ 'a'..='z'), KeyModifiers::ALT) => {
+                Action::SelectIndex(10 + (c as u8 - b'a') as usize)
+            }
             _ => Action::None,
         },
         Mode::Confirming => match key.code {

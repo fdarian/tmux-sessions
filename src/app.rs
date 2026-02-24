@@ -437,6 +437,12 @@ impl App {
                 self.list_state.select(Some(0));
                 self.update_preview();
             }
+            Action::SelectIndex(i) => {
+                if i < self.flat_entries.len() {
+                    self.list_state.select(Some(i));
+                    self.select_current();
+                }
+            }
             Action::None => {}
         }
     }
