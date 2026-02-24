@@ -44,7 +44,7 @@ pub fn map_key(key: KeyEvent, mode: &Mode) -> Action {
 
     match mode {
         Mode::Normal => match (key.code, key.modifiers) {
-            (KeyCode::Char('q'), _) => Action::Quit,
+            (KeyCode::Char('q'), _) | (KeyCode::Esc, _) => Action::Quit,
             (KeyCode::Char('k'), _) | (KeyCode::Up, _) => Action::MoveUp,
             (KeyCode::Char('p'), KeyModifiers::CONTROL) => Action::MoveUp,
             (KeyCode::Char('j'), _) | (KeyCode::Down, _) => Action::MoveDown,
