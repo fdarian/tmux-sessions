@@ -1382,6 +1382,8 @@ dependencies = [
  "crossterm",
  "fuzzy-matcher",
  "ratatui",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

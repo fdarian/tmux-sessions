@@ -17,6 +17,7 @@ pub struct PreviewPane {
 
 pub struct App {
     pub config: Option<config::Config>,
+    pub current_session_id: String,
     pub sessions: Vec<tmux::Session>,
     pub windows: Vec<tmux::Window>,
     pub panes: Vec<tmux::Pane>,
@@ -37,7 +38,8 @@ pub struct App {
 impl App {
     pub fn new() -> io::Result<Self> {
         let config = config::load_config()?;
-        let mut sessions = tmux::list_sessions()?;
+        let current_session_id = tmux::get_current_session_id()?;
+        let mut sessions = tmux::list_sessions(&current_session_id)?;
         config::apply_formatter_to_sessions(&mut sessions, &config);
         let windows = tmux::list_windows()?;
         let panes = tmux::list_panes()?;
@@ -86,6 +88,7 @@ impl App {
 
         let mut app = App {
             config,
+            current_session_id,
             sessions,
             windows,
             panes,
@@ -107,7 +110,7 @@ impl App {
     }
 
     pub fn refresh(&mut self) -> io::Result<()> {
-        self.sessions = tmux::list_sessions()?;
+        self.sessions = tmux::list_sessions(&self.current_session_id)?;
         config::apply_formatter_to_sessions(&mut self.sessions, &self.config);
         self.windows = tmux::list_windows()?;
         self.panes = tmux::list_panes()?;

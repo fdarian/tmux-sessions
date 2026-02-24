@@ -59,13 +59,18 @@ fn run_tmux(args: &[&str]) -> io::Result<()> {
     Ok(())
 }
 
-pub fn list_sessions() -> io::Result<Vec<Session>> {
-    let format = "#{session_id}\x1f#{session_name}\x1f#{session_windows}\x1f#{session_attached}";
+pub fn get_current_session_id() -> io::Result<String> {
+    run_tmux_output(&["display-message", "-p", "#{session_id}"])
+        .map(|s| s.trim().to_string())
+}
+
+pub fn list_sessions(current_session_id: &str) -> io::Result<Vec<Session>> {
+    let format = "#{session_id}\x1f#{session_name}\x1f#{session_windows}";
     let output = run_tmux_output(&["list-sessions", "-F", format])?;
     let mut sessions = Vec::new();
     for line in output.lines() {
         let parts: Vec<&str> = line.split('\x1f').collect();
-        if parts.len() != 4 {
+        if parts.len() != 3 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("unexpected field count in session line: {:?}", line),
@@ -82,7 +87,7 @@ pub fn list_sessions() -> io::Result<Vec<Session>> {
             name: parts[1].to_string(),
             display_name: parts[1].to_string(),
             window_count,
-            attached: parts[3] != "0",
+            attached: parts[0] == current_session_id,
         });
     }
     Ok(sessions)
