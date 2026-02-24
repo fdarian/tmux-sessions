@@ -200,13 +200,24 @@ pub fn flatten_filtered(
     scored.into_iter().map(|(_, entry)| entry).collect()
 }
 
+pub fn shortcut_label(index: usize) -> Option<String> {
+    match index {
+        0..=9 => Some(index.to_string()),
+        10..=35 => Some(format!("M-{}", (b'a' + (index - 10) as u8) as char)),
+        _ => None,
+    }
+}
+
 pub fn format_line(
     entry: &FlatEntry,
     line_index: usize,
     is_expanded: bool,
     key_width: usize,
 ) -> Line<'static> {
-    let key_str = format!("({})", line_index);
+    let key_str = match shortcut_label(line_index) {
+        Some(label) => format!("({})", label),
+        None => " ".repeat(key_width),
+    };
     let mut result = format!("{:>width$} ", key_str, width = key_width);
 
     if entry.depth > 0 {
