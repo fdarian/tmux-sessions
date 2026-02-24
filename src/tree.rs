@@ -5,6 +5,35 @@ use ratatui::text::Line;
 
 use crate::tmux;
 
+fn session_text(session: &tmux::Session) -> String {
+    let mut text = format!("{}: {} windows", session.display_name, session.window_count);
+    if session.attached {
+        text.push_str(" (attached)");
+    }
+    text
+}
+
+fn window_text(window: &tmux::Window) -> String {
+    format!(
+        "{}: {}{}: \"{}\"",
+        window.index, window.name, window.flags, window.pane_title
+    )
+}
+
+fn pane_text(pane: &tmux::Pane) -> String {
+    if pane.active {
+        format!(
+            "{}: {}*: \"{}\"",
+            pane.index, pane.current_command, pane.title
+        )
+    } else {
+        format!(
+            "{}: {}: \"{}\"",
+            pane.index, pane.current_command, pane.title
+        )
+    }
+}
+
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum NodeId {
     Session(String),
@@ -33,10 +62,7 @@ pub fn flatten(
         let session_is_last_sibling = si == sessions.len() - 1;
         let has_children = windows.iter().any(|w| w.session_id == session.id);
 
-        let mut text = format!("{}: {} windows", session.display_name, session.window_count);
-        if session.attached {
-            text.push_str(" (attached)");
-        }
+        let text = session_text(session);
 
         entries.push(FlatEntry {
             node_id: NodeId::Session(session.id.clone()),
@@ -60,10 +86,7 @@ pub fn flatten(
                 .iter()
                 .any(|p| p.session_id == session.id && p.window_id == window.id);
 
-            let text = format!(
-                "{}: {}{}: \"{}\"",
-                window.index, window.name, window.flags, window.pane_title
-            );
+            let text = window_text(window);
 
             entries.push(FlatEntry {
                 node_id: NodeId::Window(session.id.clone(), window.id.clone()),
@@ -86,17 +109,7 @@ pub fn flatten(
             for (pi, pane) in window_panes.iter().enumerate() {
                 let pane_is_last_sibling = pi == window_panes.len() - 1;
 
-                let text = if pane.active {
-                    format!(
-                        "{}: {}*: \"{}\"",
-                        pane.index, pane.current_command, pane.title
-                    )
-                } else {
-                    format!(
-                        "{}: {}: \"{}\"",
-                        pane.index, pane.current_command, pane.title
-                    )
-                };
+                let text = pane_text(pane);
 
                 entries.push(FlatEntry {
                     node_id: NodeId::Pane(
@@ -127,10 +140,7 @@ pub fn flatten_filtered(
     let mut scored: Vec<(i64, FlatEntry)> = Vec::new();
 
     for session in sessions.iter() {
-        let mut text = format!("{}: {} windows", session.name, session.window_count);
-        if session.attached {
-            text.push_str(" (attached)");
-        }
+        let text = session_text(session);
 
         if let Some(score) = matcher.fuzzy_match(&text, query) {
             scored.push((score, FlatEntry {
@@ -147,10 +157,7 @@ pub fn flatten_filtered(
             windows.iter().filter(|w| w.session_id == session.id).collect();
 
         for window in session_windows.iter() {
-            let text = format!(
-                "{}: {}{}: \"{}\"",
-                window.index, window.name, window.flags, window.pane_title
-            );
+            let text = window_text(window);
 
             if let Some(score) = matcher.fuzzy_match(&text, query) {
                 scored.push((score, FlatEntry {
@@ -169,17 +176,7 @@ pub fn flatten_filtered(
                 .collect();
 
             for pane in window_panes.iter() {
-                let text = if pane.active {
-                    format!(
-                        "{}: {}*: \"{}\"",
-                        pane.index, pane.current_command, pane.title
-                    )
-                } else {
-                    format!(
-                        "{}: {}: \"{}\"",
-                        pane.index, pane.current_command, pane.title
-                    )
-                };
+                let text = pane_text(pane);
 
                 if let Some(score) = matcher.fuzzy_match(&text, query) {
                     scored.push((score, FlatEntry {
