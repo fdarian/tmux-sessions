@@ -492,6 +492,23 @@ impl App {
             None => return,
         };
 
+        let is_current_session = matches!(&node_id, NodeId::Session(id) if *id == self.current_session_id);
+
+        if is_current_session {
+            let alternate = self
+                .sessions
+                .iter()
+                .find(|s| s.id != self.current_session_id)
+                .map(|s| s.id.clone());
+
+            if let Some(target_id) = alternate {
+                let _ = tmux::switch_client(&target_id);
+            }
+            let _ = tmux::kill_session(&self.current_session_id);
+            self.should_quit = true;
+            return;
+        }
+
         let result = match &node_id {
             NodeId::Session(id) => tmux::kill_session(id),
             NodeId::Window(_, window_id) => tmux::kill_window(window_id),
