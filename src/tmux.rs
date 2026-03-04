@@ -10,6 +10,7 @@ pub struct Session {
     pub display_name: String,
     pub window_count: usize,
     pub attached: bool,
+    pub activity: u64,
 }
 
 #[derive(Clone)]
@@ -65,12 +66,12 @@ pub fn get_current_session_id() -> io::Result<String> {
 }
 
 pub fn list_sessions(current_session_id: &str) -> io::Result<Vec<Session>> {
-    let format = "#{session_id}\x1f#{session_name}\x1f#{session_windows}";
+    let format = "#{session_id}\x1f#{session_name}\x1f#{session_windows}\x1f#{session_activity}";
     let output = run_tmux_output(&["list-sessions", "-F", format])?;
     let mut sessions = Vec::new();
     for line in output.lines() {
         let parts: Vec<&str> = line.split('\x1f').collect();
-        if parts.len() != 3 {
+        if parts.len() != 4 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("unexpected field count in session line: {:?}", line),
@@ -82,12 +83,19 @@ pub fn list_sessions(current_session_id: &str) -> io::Result<Vec<Session>> {
                 format!("failed to parse window_count {:?}: {}", parts[2], e),
             )
         })?;
+        let activity = parts[3].parse::<u64>().map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("failed to parse activity {:?}: {}", parts[3], e),
+            )
+        })?;
         sessions.push(Session {
             id: parts[0].to_string(),
             name: parts[1].to_string(),
             display_name: parts[1].to_string(),
             window_count,
             attached: parts[0] == current_session_id,
+            activity,
         });
     }
     Ok(sessions)

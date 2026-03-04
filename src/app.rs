@@ -41,6 +41,7 @@ impl App {
         let current_session_id = tmux::get_current_session_id()?;
         let mut sessions = tmux::list_sessions(&current_session_id)?;
         config::apply_formatter_to_sessions(&mut sessions, &config);
+        sessions.sort_by(|a, b| b.activity.cmp(&a.activity));
         let windows = tmux::list_windows()?;
         let panes = tmux::list_panes()?;
 
@@ -107,6 +108,7 @@ impl App {
     pub fn refresh(&mut self) -> io::Result<()> {
         self.sessions = tmux::list_sessions(&self.current_session_id)?;
         config::apply_formatter_to_sessions(&mut self.sessions, &self.config);
+        self.sessions.sort_by(|a, b| b.activity.cmp(&a.activity));
         self.windows = tmux::list_windows()?;
         self.panes = tmux::list_panes()?;
 
