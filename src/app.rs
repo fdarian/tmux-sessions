@@ -9,6 +9,38 @@ use crate::event::{Action, Mode};
 use crate::tmux;
 use crate::tree::{self, FlatEntry, NodeId};
 
+fn pins_path() -> io::Result<String> {
+    let home = std::env::var("HOME")
+        .map_err(|_| io::Error::new(io::ErrorKind::NotFound, "$HOME not set"))?;
+    Ok(format!("{}/.config/tmux-sessions/pins.json", home))
+}
+
+fn load_pins() -> HashSet<String> {
+    let path = match pins_path() {
+        Ok(p) => p,
+        Err(_) => return HashSet::new(),
+    };
+    let content = match std::fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(_) => return HashSet::new(),
+    };
+    serde_json::from_str::<Vec<String>>(&content)
+        .map(|v| v.into_iter().collect())
+        .unwrap_or_default()
+}
+
+fn save_pins(pinned: &HashSet<String>) {
+    let path = match pins_path() {
+        Ok(p) => p,
+        Err(_) => return,
+    };
+    let mut names: Vec<&String> = pinned.iter().collect();
+    names.sort();
+    if let Ok(json) = serde_json::to_string(&names) {
+        let _ = std::fs::write(&path, json);
+    }
+}
+
 pub struct PreviewPane {
     pub label: String,
     pub content: Vec<u8>,
@@ -33,6 +65,7 @@ pub struct App {
     pub primary_color: Color,
     pub filter_query: String,
     pub filter_cursor: usize,
+    pub pinned: HashSet<String>,
 }
 
 impl App {
@@ -52,7 +85,8 @@ impl App {
             }
         }
 
-        let flat_entries = tree::flatten(&sessions, &windows, &panes, &opened);
+        let pinned = load_pins();
+        let flat_entries = tree::flatten(&sessions, &windows, &panes, &opened, &pinned);
         let mut list_state = ListState::default();
         let initial_index = flat_entries
             .iter()
@@ -100,6 +134,7 @@ impl App {
             primary_color,
             filter_query: String::new(),
             filter_cursor: 0,
+            pinned,
         };
         app.update_preview();
         Ok(app)
@@ -125,7 +160,7 @@ impl App {
 
     fn rebuild_flat_entries(&mut self) {
         if self.filter_query.is_empty() {
-            self.flat_entries = tree::flatten(&self.sessions, &self.windows, &self.panes, &self.opened);
+            self.flat_entries = tree::flatten(&self.sessions, &self.windows, &self.panes, &self.opened, &self.pinned);
         } else {
             self.flat_entries = tree::flatten_filtered(&self.sessions, &self.windows, &self.panes, &self.filter_query);
         }
@@ -143,6 +178,10 @@ impl App {
 
         let node_id = &self.flat_entries[i].node_id;
         match node_id {
+            NodeId::Separator => {
+                self.preview_panes.clear();
+                self.preview_title.clear();
+            }
             NodeId::Session(session_id) => {
                 let session_name = self.sessions.iter()
                     .find(|s| s.id == *session_id)
@@ -217,19 +256,57 @@ impl App {
             Action::Quit => self.should_quit = true,
             Action::MoveUp => {
                 if let Some(i) = self.list_state.selected() {
-                    if i > 0 {
-                        self.list_state.select(Some(i - 1));
-                        self.update_preview();
+                    let mut target = i;
+                    while target > 0 {
+                        target -= 1;
+                        if self.flat_entries[target].node_id != NodeId::Separator {
+                            self.list_state.select(Some(target));
+                            self.update_preview();
+                            break;
+                        }
                     }
                 }
             }
             Action::MoveDown => {
                 if let Some(i) = self.list_state.selected() {
-                    if i + 1 < self.flat_entries.len() {
-                        self.list_state.select(Some(i + 1));
-                        self.update_preview();
+                    let mut target = i;
+                    while target + 1 < self.flat_entries.len() {
+                        target += 1;
+                        if self.flat_entries[target].node_id != NodeId::Separator {
+                            self.list_state.select(Some(target));
+                            self.update_preview();
+                            break;
+                        }
                     }
                 }
+            }
+            Action::TogglePin => {
+                let i = match self.list_state.selected() {
+                    Some(i) if i < self.flat_entries.len() => i,
+                    _ => return,
+                };
+                let session_id = match &self.flat_entries[i].node_id {
+                    NodeId::Session(id) => id.clone(),
+                    NodeId::Window(session_id, _) => session_id.clone(),
+                    NodeId::Pane(session_id, _, _) => session_id.clone(),
+                    NodeId::Separator => return,
+                };
+                let session_name = match self.sessions.iter().find(|s| s.id == session_id) {
+                    Some(s) => s.name.clone(),
+                    None => return,
+                };
+                if self.pinned.contains(&session_name) {
+                    self.pinned.remove(&session_name);
+                } else {
+                    self.pinned.insert(session_name);
+                }
+                save_pins(&self.pinned);
+                let current_node_id = self.flat_entries[i].node_id.clone();
+                self.rebuild_flat_entries();
+                if let Some(new_i) = self.flat_entries.iter().position(|e| e.node_id == current_node_id) {
+                    self.list_state.select(Some(new_i));
+                }
+                self.update_preview();
             }
             Action::CollapseOrParent => {
                 if let Some(i) = self.list_state.selected() {
@@ -471,6 +548,7 @@ impl App {
             NodeId::Pane(session_id, window_id, pane_id) => tmux::switch_client(session_id)
                 .and_then(|_| tmux::select_window(window_id))
                 .and_then(|_| tmux::select_pane(pane_id)),
+            NodeId::Separator => return,
         };
 
         if result.is_ok() {
@@ -483,6 +561,10 @@ impl App {
             Some(i) if i < self.flat_entries.len() => i,
             _ => return,
         };
+
+        if self.flat_entries[i].node_id == NodeId::Separator {
+            return;
+        }
 
         self.confirming_node = Some(self.flat_entries[i].node_id.clone());
         self.mode = Mode::Confirming;
@@ -515,6 +597,7 @@ impl App {
             NodeId::Session(id) => tmux::kill_session(id),
             NodeId::Window(_, window_id) => tmux::kill_window(window_id),
             NodeId::Pane(_, _, pane_id) => tmux::kill_pane(pane_id),
+            NodeId::Separator => return,
         };
 
         self.mode = Mode::Normal;
@@ -549,6 +632,7 @@ impl App {
             NodeId::Pane(_, _, pane_id) => {
                 format!("pane {}", pane_id)
             }
+            NodeId::Separator => return None,
         };
         Some(label)
     }

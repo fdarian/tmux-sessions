@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
 use fuzzy_matcher::FuzzyMatcher;
+use ratatui::style::{Color, Style};
 use ratatui::text::Line;
 
 use crate::tmux;
@@ -39,6 +40,7 @@ pub enum NodeId {
     Session(String),
     Window(String, String),
     Pane(String, String, String),
+    Separator,
 }
 
 pub struct FlatEntry {
@@ -50,19 +52,16 @@ pub struct FlatEntry {
     pub text: String,
 }
 
-pub fn flatten(
-    sessions: &[tmux::Session],
+fn flatten_session_list(
+    sessions: &[&tmux::Session],
     windows: &[tmux::Window],
     panes: &[tmux::Pane],
     opened: &HashSet<NodeId>,
-) -> Vec<FlatEntry> {
-    let mut entries = Vec::new();
-
+    entries: &mut Vec<FlatEntry>,
+) {
     for (si, session) in sessions.iter().enumerate() {
         let session_is_last_sibling = si == sessions.len() - 1;
         let has_children = windows.iter().any(|w| w.session_id == session.id);
-
-        let text = session_text(session);
 
         entries.push(FlatEntry {
             node_id: NodeId::Session(session.id.clone()),
@@ -70,7 +69,7 @@ pub fn flatten(
             has_children,
             is_last_sibling: session_is_last_sibling,
             ancestor_is_last: vec![],
-            text,
+            text: session_text(session),
         });
 
         if !opened.contains(&NodeId::Session(session.id.clone())) {
@@ -86,15 +85,13 @@ pub fn flatten(
                 .iter()
                 .any(|p| p.session_id == session.id && p.window_id == window.id);
 
-            let text = window_text(window);
-
             entries.push(FlatEntry {
                 node_id: NodeId::Window(session.id.clone(), window.id.clone()),
                 depth: 1,
                 has_children,
                 is_last_sibling: window_is_last_sibling,
                 ancestor_is_last: vec![],
-                text,
+                text: window_text(window),
             });
 
             if !opened.contains(&NodeId::Window(session.id.clone(), window.id.clone())) {
@@ -109,8 +106,6 @@ pub fn flatten(
             for (pi, pane) in window_panes.iter().enumerate() {
                 let pane_is_last_sibling = pi == window_panes.len() - 1;
 
-                let text = pane_text(pane);
-
                 entries.push(FlatEntry {
                     node_id: NodeId::Pane(
                         session.id.clone(),
@@ -121,11 +116,41 @@ pub fn flatten(
                     has_children: false,
                     is_last_sibling: pane_is_last_sibling,
                     ancestor_is_last: vec![window_is_last_sibling],
-                    text,
+                    text: pane_text(pane),
                 });
             }
         }
     }
+}
+
+pub fn flatten(
+    sessions: &[tmux::Session],
+    windows: &[tmux::Window],
+    panes: &[tmux::Pane],
+    opened: &HashSet<NodeId>,
+    pinned: &HashSet<String>,
+) -> Vec<FlatEntry> {
+    let pinned_sessions: Vec<&tmux::Session> =
+        sessions.iter().filter(|s| pinned.contains(&s.name)).collect();
+    let unpinned_sessions: Vec<&tmux::Session> =
+        sessions.iter().filter(|s| !pinned.contains(&s.name)).collect();
+
+    let mut entries = Vec::new();
+
+    flatten_session_list(&pinned_sessions, windows, panes, opened, &mut entries);
+
+    if !pinned_sessions.is_empty() && !unpinned_sessions.is_empty() {
+        entries.push(FlatEntry {
+            node_id: NodeId::Separator,
+            depth: 0,
+            has_children: false,
+            is_last_sibling: false,
+            ancestor_is_last: vec![],
+            text: String::new(),
+        });
+    }
+
+    flatten_session_list(&unpinned_sessions, windows, panes, opened, &mut entries);
 
     entries
 }
@@ -214,6 +239,14 @@ pub fn format_line(
     is_expanded: bool,
     key_width: usize,
 ) -> Line<'static> {
+    if entry.node_id == NodeId::Separator {
+        let prefix = " ".repeat(key_width + 1);
+        return Line::styled(
+            format!("{}─────────────────────────────────────", prefix),
+            Style::default().fg(Color::DarkGray),
+        );
+    }
+
     let key_str = match shortcut_label(line_index) {
         Some(label) => format!("({})", label),
         None => " ".repeat(key_width),
