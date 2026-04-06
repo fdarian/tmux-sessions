@@ -68,6 +68,7 @@ cargo run
 | `l` / `→` | Expand / child |
 | `Space` | Toggle expand/collapse |
 | `Enter` | Switch to selected |
+| `p` | Toggle pin selected session |
 | `x` | Kill selected (with confirmation) |
 | `r` | Refresh tree |
 | `q` | Quit |
