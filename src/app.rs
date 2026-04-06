@@ -78,12 +78,7 @@ impl App {
         let windows = tmux::list_windows()?;
         let panes = tmux::list_panes()?;
 
-        let mut opened = HashSet::new();
-        for session in &sessions {
-            if session.attached {
-                opened.insert(NodeId::Session(session.id.clone()));
-            }
-        }
+        let opened = HashSet::new();
 
         let pinned = load_pins();
         let flat_entries = tree::flatten(&sessions, &windows, &panes, &opened, &pinned);
