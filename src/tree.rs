@@ -158,7 +158,6 @@ pub fn flatten(
 pub fn flatten_filtered(
     sessions: &[tmux::Session],
     windows: &[tmux::Window],
-    panes: &[tmux::Pane],
     query: &str,
 ) -> Vec<FlatEntry> {
     let matcher = fuzzy_matcher::skim::SkimMatcherV2::default();
@@ -166,58 +165,16 @@ pub fn flatten_filtered(
 
     for session in sessions.iter() {
         let text = session_text(session);
-
         if let Some(score) = matcher.fuzzy_match(&text, query) {
+            let has_children = windows.iter().any(|w| w.session_id == session.id);
             scored.push((score, FlatEntry {
                 node_id: NodeId::Session(session.id.clone()),
                 depth: 0,
-                has_children: false,
+                has_children,
                 is_last_sibling: false,
                 ancestor_is_last: vec![],
                 text,
             }));
-        }
-
-        let session_windows: Vec<&tmux::Window> =
-            windows.iter().filter(|w| w.session_id == session.id).collect();
-
-        for window in session_windows.iter() {
-            let text = window_text(window);
-
-            if let Some(score) = matcher.fuzzy_match(&text, query) {
-                scored.push((score, FlatEntry {
-                    node_id: NodeId::Window(session.id.clone(), window.id.clone()),
-                    depth: 0,
-                    has_children: false,
-                    is_last_sibling: false,
-                    ancestor_is_last: vec![],
-                    text,
-                }));
-            }
-
-            let window_panes: Vec<&tmux::Pane> = panes
-                .iter()
-                .filter(|p| p.session_id == session.id && p.window_id == window.id)
-                .collect();
-
-            for pane in window_panes.iter() {
-                let text = pane_text(pane);
-
-                if let Some(score) = matcher.fuzzy_match(&text, query) {
-                    scored.push((score, FlatEntry {
-                        node_id: NodeId::Pane(
-                            session.id.clone(),
-                            window.id.clone(),
-                            pane.id.clone(),
-                        ),
-                        depth: 0,
-                        has_children: false,
-                        is_last_sibling: false,
-                        ancestor_is_last: vec![],
-                        text,
-                    }));
-                }
-            }
         }
     }
 

@@ -157,7 +157,7 @@ impl App {
         if self.filter_query.is_empty() {
             self.flat_entries = tree::flatten(&self.sessions, &self.windows, &self.panes, &self.opened, &self.pinned);
         } else {
-            self.flat_entries = tree::flatten_filtered(&self.sessions, &self.windows, &self.panes, &self.filter_query);
+            self.flat_entries = tree::flatten_filtered(&self.sessions, &self.windows, &self.filter_query);
         }
     }
 
