@@ -136,6 +136,11 @@ impl App {
     }
 
     pub fn refresh(&mut self) -> io::Result<()> {
+        let prev_node_id = self.list_state.selected()
+            .and_then(|i| self.flat_entries.get(i))
+            .map(|e| e.node_id.clone());
+        let prev_index = self.list_state.selected().unwrap_or(0);
+
         self.sessions = tmux::list_sessions(&self.current_session_id)?;
         config::apply_formatter_to_sessions(&mut self.sessions, &self.config);
         self.sessions.sort_by(|a, b| b.activity.cmp(&a.activity));
@@ -148,7 +153,12 @@ impl App {
         }
 
         self.rebuild_flat_entries();
-        self.list_state.select(Some(0));
+
+        let new_index = prev_node_id
+            .and_then(|id| self.flat_entries.iter().position(|e| e.node_id == id))
+            .unwrap_or_else(|| prev_index.min(self.flat_entries.len().saturating_sub(1)));
+        self.list_state.select(Some(new_index));
+
         self.update_preview();
         Ok(())
     }
