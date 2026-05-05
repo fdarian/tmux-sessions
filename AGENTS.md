@@ -66,9 +66,15 @@ cargo run
 | `k` / `↑` | Move up |
 | `h` / `←` | Collapse / parent |
 | `l` / `→` | Expand / child |
-| `Space` | Toggle expand/collapse |
+| `Space` | Open fullscreen preview |
 | `Enter` | Switch to selected |
 | `p` | Toggle pin selected session |
 | `x` | Kill selected (with confirmation) |
 | `r` | Refresh tree |
 | `q` | Quit |
+
+In fullscreen preview mode:
+- `h` / `←` — previous pane
+- `l` / `→` — next pane
+- `Enter` — switch to previewed pane
+- `Esc` — return to tree

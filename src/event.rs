@@ -7,7 +7,11 @@ pub enum Action {
     MoveDown,
     CollapseOrParent,
     ExpandOrChild,
-    Toggle,
+    EnterFullPreview,
+    ExitFullPreview,
+    PreviewPrev,
+    PreviewNext,
+    SelectPreviewPane,
     Select,
     Kill,
     ConfirmKill,
@@ -37,6 +41,7 @@ pub enum Mode {
     Normal,
     Confirming,
     Filtering,
+    Previewing,
 }
 
 pub fn map_key(key: KeyEvent, mode: &Mode) -> Action {
@@ -53,7 +58,7 @@ pub fn map_key(key: KeyEvent, mode: &Mode) -> Action {
             (KeyCode::Char('n'), KeyModifiers::CONTROL) => Action::MoveDown,
             (KeyCode::Char('h'), _) | (KeyCode::Left, _) => Action::CollapseOrParent,
             (KeyCode::Char('l'), _) | (KeyCode::Right, _) => Action::ExpandOrChild,
-            (KeyCode::Char(' '), _) => Action::Toggle,
+            (KeyCode::Char(' '), _) => Action::EnterFullPreview,
             (KeyCode::Enter, _) => Action::Select,
             (KeyCode::Char('p'), KeyModifiers::NONE) => Action::TogglePin,
             (KeyCode::Char('x'), _) => Action::Kill,
@@ -87,6 +92,13 @@ pub fn map_key(key: KeyEvent, mode: &Mode) -> Action {
             (KeyCode::Backspace, _) => Action::FilterBackspace,
             (KeyCode::Delete, _) => Action::FilterDeleteForward,
             (KeyCode::Char(c), _) if c.is_ascii_graphic() || c == ' ' => Action::FilterChar(c),
+            _ => Action::None,
+        },
+        Mode::Previewing => match (key.code, key.modifiers) {
+            (KeyCode::Esc, _) => Action::ExitFullPreview,
+            (KeyCode::Char('h'), _) | (KeyCode::Left, _) => Action::PreviewPrev,
+            (KeyCode::Char('l'), _) | (KeyCode::Right, _) => Action::PreviewNext,
+            (KeyCode::Enter, _) => Action::SelectPreviewPane,
             _ => Action::None,
         },
     }
