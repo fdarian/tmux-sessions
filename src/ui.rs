@@ -189,11 +189,7 @@ fn render_full_preview(frame: &mut Frame, app: &App, area: Rect) {
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3),
-            Constraint::Min(0),
-            Constraint::Length(1),
-        ])
+        .constraints([Constraint::Min(0), Constraint::Length(1)])
         .split(area);
 
     let title = format!(
@@ -205,12 +201,13 @@ fn render_full_preview(frame: &mut Frame, app: &App, area: Rect) {
         app.preview_full_panes.len()
     );
 
-    let header_block = Block::default().borders(Borders::ALL).title(title);
-    frame.render_widget(header_block, chunks[0]);
+    let outer_block = Block::default().borders(Borders::ALL).title(title);
+    let inner = outer_block.inner(chunks[0]);
+    frame.render_widget(outer_block, chunks[0]);
 
     let content = preview.content.as_slice().into_text().unwrap_or_default();
     let paragraph = Paragraph::new(content);
-    frame.render_widget(paragraph, chunks[1]);
+    frame.render_widget(paragraph, inner);
 
     let footer_text = if app.preview_full_panes.len() > 1 {
         "[h] prev  [l] next  [esc] back  [enter] switch"
@@ -219,7 +216,7 @@ fn render_full_preview(frame: &mut Frame, app: &App, area: Rect) {
     };
     let footer = Paragraph::new(footer_text)
         .style(Style::default().fg(Color::DarkGray));
-    frame.render_widget(footer, chunks[2]);
+    frame.render_widget(footer, chunks[1]);
 }
 
 fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
