@@ -47,6 +47,16 @@ pub struct PreviewPane {
     pub is_active: bool,
 }
 
+pub struct PreviewFullPane {
+    pub session_id: String,
+    pub window_id: String,
+    pub pane_id: String,
+    pub session_name: String,
+    pub window_label: String,
+    pub pane_label: String,
+    pub content: Vec<u8>,
+}
+
 pub struct App {
     pub config: Option<config::Config>,
     pub current_session_id: String,
@@ -58,6 +68,8 @@ pub struct App {
     pub list_state: ListState,
     pub preview_panes: Vec<PreviewPane>,
     pub preview_title: String,
+    pub preview_full_panes: Vec<PreviewFullPane>,
+    pub preview_full_index: usize,
     pub mode: Mode,
     pub confirming_node: Option<NodeId>,
     pub should_quit: bool,
@@ -122,6 +134,8 @@ impl App {
             list_state,
             preview_panes: Vec::new(),
             preview_title: String::new(),
+            preview_full_panes: Vec::new(),
+            preview_full_index: 0,
             mode: Mode::Normal,
             confirming_node: None,
             should_quit: false,
@@ -256,6 +270,122 @@ impl App {
         }
     }
 
+    fn build_full_preview(&self) -> (Vec<PreviewFullPane>, usize) {
+        let i = match self.list_state.selected() {
+            Some(i) if i < self.flat_entries.len() => i,
+            _ => return (Vec::new(), 0),
+        };
+
+        let node_id = &self.flat_entries[i].node_id;
+        match node_id {
+            NodeId::Separator => (Vec::new(), 0),
+            NodeId::Pane(session_id, window_id, pane_id) => {
+                let session = self.sessions.iter().find(|s| s.id == *session_id);
+                let window = self.windows.iter().find(|w| w.id == *window_id);
+                let pane = self.panes.iter().find(|p| p.id == *pane_id);
+
+                let session_name = session.map(|s| s.display_name.clone()).unwrap_or_else(|| session_id.clone());
+                let window_label = window.map(|w| format!("{}:{}", w.index, w.name)).unwrap_or_else(|| window_id.clone());
+                let pane_label = pane.map(|p| format!("{}:{}", p.index, p.current_command)).unwrap_or_else(|| pane_id.clone());
+                let content = tmux::capture_pane_raw(pane_id).unwrap_or_default();
+
+                let preview = PreviewFullPane {
+                    session_id: session_id.clone(),
+                    window_id: window_id.clone(),
+                    pane_id: pane_id.clone(),
+                    session_name,
+                    window_label,
+                    pane_label,
+                    content,
+                };
+                (vec![preview], 0)
+            }
+            NodeId::Window(session_id, window_id) => {
+                let session = self.sessions.iter().find(|s| s.id == *session_id);
+                let session_name = session.map(|s| s.display_name.clone()).unwrap_or_else(|| session_id.clone());
+
+                let mut window_panes: Vec<&tmux::Pane> = self.panes.iter()
+                    .filter(|p| p.session_id == *session_id && p.window_id == *window_id)
+                    .collect();
+                window_panes.sort_by(|a, b| a.index.cmp(&b.index));
+
+                let initial_index = window_panes.iter()
+                    .position(|p| p.active)
+                    .unwrap_or(0);
+
+                let previews: Vec<PreviewFullPane> = window_panes.iter().map(|pane| {
+                    let window = self.windows.iter().find(|w| w.id == *window_id);
+                    let window_label = window.map(|w| format!("{}:{}", w.index, w.name)).unwrap_or_else(|| window_id.clone());
+                    let pane_label = format!("{}:{}", pane.index, pane.current_command);
+                    let content = tmux::capture_pane_raw(&pane.id).unwrap_or_default();
+
+                    PreviewFullPane {
+                        session_id: session_id.clone(),
+                        window_id: window_id.clone(),
+                        pane_id: pane.id.clone(),
+                        session_name: session_name.clone(),
+                        window_label,
+                        pane_label,
+                        content,
+                    }
+                }).collect();
+
+                (previews, initial_index)
+            }
+            NodeId::Session(session_id) => {
+                let session = self.sessions.iter().find(|s| s.id == *session_id);
+                let session_name = session.map(|s| s.display_name.clone()).unwrap_or_else(|| session_id.clone());
+
+                let mut session_windows: Vec<&tmux::Window> = self.windows.iter()
+                    .filter(|w| w.session_id == *session_id)
+                    .collect();
+                session_windows.sort_by(|a, b| a.index.cmp(&b.index));
+
+                let mut previews = Vec::new();
+                let mut initial_index = 0;
+                let mut found_active = false;
+                let mut first_active_fallback = None;
+
+                for window in &session_windows {
+                    let mut window_panes: Vec<&tmux::Pane> = self.panes.iter()
+                        .filter(|p| p.session_id == *session_id && p.window_id == window.id)
+                        .collect();
+                    window_panes.sort_by(|a, b| a.index.cmp(&b.index));
+
+                    for pane in &window_panes {
+                        if !found_active && window.active && pane.active {
+                            initial_index = previews.len();
+                            found_active = true;
+                        }
+                        if first_active_fallback.is_none() && pane.active {
+                            first_active_fallback = Some(previews.len());
+                        }
+
+                        let window_label = format!("{}:{}", window.index, window.name);
+                        let pane_label = format!("{}:{}", pane.index, pane.current_command);
+                        let content = tmux::capture_pane_raw(&pane.id).unwrap_or_default();
+
+                        previews.push(PreviewFullPane {
+                            session_id: session_id.clone(),
+                            window_id: window.id.clone(),
+                            pane_id: pane.id.clone(),
+                            session_name: session_name.clone(),
+                            window_label,
+                            pane_label,
+                            content,
+                        });
+                    }
+                }
+
+                if !found_active {
+                    initial_index = first_active_fallback.unwrap_or(0);
+                }
+
+                (previews, initial_index)
+            }
+        }
+    }
+
     pub fn handle_action(&mut self, action: Action) {
         match action {
             Action::Quit => self.should_quit = true,
@@ -357,20 +487,38 @@ impl App {
                     self.update_preview();
                 }
             }
-            Action::Toggle => {
-                if let Some(i) = self.list_state.selected() {
-                    if self.flat_entries[i].has_children {
-                        let node_id = self.flat_entries[i].node_id.clone();
-                        if self.opened.contains(&node_id) {
-                            self.opened.remove(&node_id);
-                        } else {
-                            self.opened.insert(node_id);
-                        }
-                        self.rebuild_flat_entries();
-                        if i >= self.flat_entries.len() {
-                            self.list_state
-                                .select(Some(self.flat_entries.len().saturating_sub(1)));
-                        }
+            Action::EnterFullPreview => {
+                let (panes, initial_index) = self.build_full_preview();
+                if !panes.is_empty() {
+                    self.preview_full_panes = panes;
+                    self.preview_full_index = initial_index;
+                    self.mode = Mode::Previewing;
+                }
+            }
+            Action::ExitFullPreview => {
+                self.mode = Mode::Normal;
+                self.preview_full_panes.clear();
+                self.preview_full_index = 0;
+            }
+            Action::PreviewPrev => {
+                if !self.preview_full_panes.is_empty() {
+                    let len = self.preview_full_panes.len();
+                    self.preview_full_index = (self.preview_full_index + len - 1) % len;
+                }
+            }
+            Action::PreviewNext => {
+                if !self.preview_full_panes.is_empty() {
+                    let len = self.preview_full_panes.len();
+                    self.preview_full_index = (self.preview_full_index + 1) % len;
+                }
+            }
+            Action::SelectPreviewPane => {
+                if let Some(preview) = self.preview_full_panes.get(self.preview_full_index) {
+                    let result = tmux::switch_client(&preview.session_id)
+                        .and_then(|_| tmux::select_window(&preview.window_id))
+                        .and_then(|_| tmux::select_pane(&preview.pane_id));
+                    if result.is_ok() {
+                        self.should_quit = true;
                     }
                 }
             }
