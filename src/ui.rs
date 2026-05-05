@@ -10,6 +10,11 @@ use crate::event::Mode;
 use crate::tree;
 
 pub fn render(frame: &mut Frame, app: &mut App) {
+    if app.mode == Mode::Previewing {
+        render_full_preview(frame, app, frame.area());
+        return;
+    }
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
@@ -174,6 +179,47 @@ fn render_confirmation(frame: &mut Frame, app: &App) {
         .wrap(Wrap { trim: false });
 
     frame.render_widget(popup, area);
+}
+
+fn render_full_preview(frame: &mut Frame, app: &App, area: Rect) {
+    let preview = match app.preview_full_panes.get(app.preview_full_index) {
+        Some(p) => p,
+        None => return,
+    };
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(0),
+            Constraint::Length(1),
+        ])
+        .split(area);
+
+    let title = format!(
+        " {} — {} — {}  ({}/{}) ",
+        preview.session_name,
+        preview.window_label,
+        preview.pane_label,
+        app.preview_full_index + 1,
+        app.preview_full_panes.len()
+    );
+
+    let header_block = Block::default().borders(Borders::ALL).title(title);
+    frame.render_widget(header_block, chunks[0]);
+
+    let content = preview.content.as_slice().into_text().unwrap_or_default();
+    let paragraph = Paragraph::new(content);
+    frame.render_widget(paragraph, chunks[1]);
+
+    let footer_text = if app.preview_full_panes.len() > 1 {
+        "[h] prev  [l] next  [esc] back  [enter] switch"
+    } else {
+        "[esc] back  [enter] switch"
+    };
+    let footer = Paragraph::new(footer_text)
+        .style(Style::default().fg(Color::DarkGray));
+    frame.render_widget(footer, chunks[2]);
 }
 
 fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
