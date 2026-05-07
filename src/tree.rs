@@ -208,7 +208,7 @@ fn flatten_group_sessions(
 }
 
 fn flatten_grouped(
-    sessions: &[tmux::Session],
+    sessions: &[&tmux::Session],
     windows: &[tmux::Window],
     panes: &[tmux::Pane],
     opened: &HashSet<NodeId>,
@@ -228,9 +228,9 @@ fn flatten_grouped(
                 group_order.push(prefix.to_string());
                 group_map.insert(prefix.to_string(), Vec::new());
             }
-            group_map.get_mut(prefix).unwrap().push(session);
+            group_map.get_mut(prefix).unwrap().push(*session);
         } else {
-            ungrouped.push(session);
+            ungrouped.push(*session);
         }
     }
 
@@ -266,16 +266,12 @@ pub fn flatten(
 ) -> Vec<FlatEntry> {
     let mut entries = Vec::new();
 
-    if let Some(sep) = group_separator {
-        flatten_grouped(sessions, windows, panes, opened, &mut entries, sep);
-        return entries;
-    }
-
     let pinned_sessions: Vec<&tmux::Session> =
         sessions.iter().filter(|s| pinned.contains(&s.name)).collect();
     let unpinned_sessions: Vec<&tmux::Session> =
         sessions.iter().filter(|s| !pinned.contains(&s.name)).collect();
 
+    // Pinned always render flat at the top, regardless of grouping.
     flatten_session_list(&pinned_sessions, windows, panes, opened, &mut entries);
 
     if !pinned_sessions.is_empty() && !unpinned_sessions.is_empty() {
@@ -289,7 +285,14 @@ pub fn flatten(
         });
     }
 
-    flatten_session_list(&unpinned_sessions, windows, panes, opened, &mut entries);
+    match group_separator {
+        Some(sep) => flatten_grouped(
+            &unpinned_sessions, windows, panes, opened, &mut entries, sep,
+        ),
+        None => flatten_session_list(
+            &unpinned_sessions, windows, panes, opened, &mut entries,
+        ),
+    }
 
     entries
 }
