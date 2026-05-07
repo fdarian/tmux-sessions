@@ -80,6 +80,23 @@ pub struct App {
     pub pinned: HashSet<String>,
 }
 
+fn pre_open_groups(sessions: &[tmux::Session], separator: Option<&str>) -> HashSet<NodeId> {
+    let mut opened = HashSet::new();
+    let sep = match separator {
+        Some(s) => s,
+        None => return opened,
+    };
+    for session in sessions.iter() {
+        let mut parts = session.display_name.splitn(2, sep);
+        let prefix = parts.next().unwrap_or("");
+        let suffix = parts.next().unwrap_or("");
+        if !prefix.is_empty() && !suffix.is_empty() {
+            opened.insert(NodeId::Group(prefix.to_string()));
+        }
+    }
+    opened
+}
+
 impl App {
     pub fn new() -> io::Result<Self> {
         let config = config::load_config()?;
@@ -90,10 +107,10 @@ impl App {
         let windows = tmux::list_windows()?;
         let panes = tmux::list_panes()?;
 
-        let opened = HashSet::new();
-
         let pinned = load_pins();
-        let flat_entries = tree::flatten(&sessions, &windows, &panes, &opened, &pinned);
+        let group_sep = config.as_ref().and_then(|c| c.group_name_separator.as_deref());
+        let opened = pre_open_groups(&sessions, group_sep);
+        let flat_entries = tree::flatten(&sessions, &windows, &panes, &opened, &pinned, group_sep);
         let mut list_state = ListState::default();
         let initial_index = flat_entries
             .iter()
@@ -166,6 +183,11 @@ impl App {
             return Ok(());
         }
 
+        let group_sep = self.config.as_ref().and_then(|c| c.group_name_separator.as_deref());
+        for node_id in pre_open_groups(&self.sessions, group_sep) {
+            self.opened.insert(node_id);
+        }
+
         self.rebuild_flat_entries();
 
         let new_index = prev_node_id
@@ -179,7 +201,8 @@ impl App {
 
     fn rebuild_flat_entries(&mut self) {
         if self.filter_query.is_empty() {
-            self.flat_entries = tree::flatten(&self.sessions, &self.windows, &self.panes, &self.opened, &self.pinned);
+            let sep = self.config.as_ref().and_then(|c| c.group_name_separator.as_deref());
+            self.flat_entries = tree::flatten(&self.sessions, &self.windows, &self.panes, &self.opened, &self.pinned, sep);
         } else {
             self.flat_entries = tree::flatten_filtered(&self.sessions, &self.windows, &self.filter_query);
         }
@@ -197,7 +220,7 @@ impl App {
 
         let node_id = &self.flat_entries[i].node_id;
         match node_id {
-            NodeId::Separator => {
+            NodeId::Separator | NodeId::Group(_) => {
                 self.preview_panes.clear();
                 self.preview_title.clear();
             }
@@ -278,7 +301,7 @@ impl App {
 
         let node_id = &self.flat_entries[i].node_id;
         match node_id {
-            NodeId::Separator => (Vec::new(), 0),
+            NodeId::Separator | NodeId::Group(_) => (Vec::new(), 0),
             NodeId::Pane(session_id, window_id, pane_id) => {
                 let session = self.sessions.iter().find(|s| s.id == *session_id);
                 let window = self.windows.iter().find(|w| w.id == *window_id);
@@ -424,7 +447,7 @@ impl App {
                     NodeId::Session(id) => id.clone(),
                     NodeId::Window(session_id, _) => session_id.clone(),
                     NodeId::Pane(session_id, _, _) => session_id.clone(),
-                    NodeId::Separator => return,
+                    NodeId::Separator | NodeId::Group(_) => return,
                 };
                 let session_name = match self.sessions.iter().find(|s| s.id == session_id) {
                     Some(s) => s.name.clone(),
@@ -701,7 +724,7 @@ impl App {
             NodeId::Pane(session_id, window_id, pane_id) => tmux::switch_client(session_id)
                 .and_then(|_| tmux::select_window(window_id))
                 .and_then(|_| tmux::select_pane(pane_id)),
-            NodeId::Separator => return,
+            NodeId::Separator | NodeId::Group(_) => return,
         };
 
         if result.is_ok() {
@@ -715,7 +738,7 @@ impl App {
             _ => return,
         };
 
-        if self.flat_entries[i].node_id == NodeId::Separator {
+        if matches!(self.flat_entries[i].node_id, NodeId::Separator | NodeId::Group(_)) {
             return;
         }
 
@@ -750,7 +773,7 @@ impl App {
             NodeId::Session(id) => tmux::kill_session(id),
             NodeId::Window(_, window_id) => tmux::kill_window(window_id),
             NodeId::Pane(_, _, pane_id) => tmux::kill_pane(pane_id),
-            NodeId::Separator => return,
+            NodeId::Separator | NodeId::Group(_) => return,
         };
 
         self.mode = Mode::Normal;
@@ -785,7 +808,7 @@ impl App {
             NodeId::Pane(_, _, pane_id) => {
                 format!("pane {}", pane_id)
             }
-            NodeId::Separator => return None,
+            NodeId::Separator | NodeId::Group(_) => return None,
         };
         Some(label)
     }
