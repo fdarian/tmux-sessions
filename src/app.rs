@@ -65,6 +65,7 @@ pub struct App {
     pub panes: Vec<tmux::Pane>,
     pub flat_entries: Vec<FlatEntry>,
     pub opened: HashSet<NodeId>,
+    pub seen_groups: HashSet<String>,
     pub list_state: ListState,
     pub preview_panes: Vec<PreviewPane>,
     pub preview_title: String,
@@ -80,21 +81,21 @@ pub struct App {
     pub pinned: HashSet<String>,
 }
 
-fn pre_open_groups(sessions: &[tmux::Session], separator: Option<&str>) -> HashSet<NodeId> {
-    let mut opened = HashSet::new();
+fn extract_group_prefixes(sessions: &[tmux::Session], separator: Option<&str>) -> Vec<String> {
     let sep = match separator {
         Some(s) => s,
-        None => return opened,
+        None => return Vec::new(),
     };
+    let mut seen = HashSet::new();
+    let mut prefixes = Vec::new();
     for session in sessions.iter() {
-        let mut parts = session.display_name.splitn(2, sep);
-        let prefix = parts.next().unwrap_or("");
-        let suffix = parts.next().unwrap_or("");
-        if !prefix.is_empty() && !suffix.is_empty() {
-            opened.insert(NodeId::Group(prefix.to_string()));
+        if let Some((prefix, _)) = session.display_name.split_once(sep) {
+            if !prefix.is_empty() && seen.insert(prefix.to_string()) {
+                prefixes.push(prefix.to_string());
+            }
         }
     }
-    opened
+    prefixes
 }
 
 impl App {
@@ -109,7 +110,11 @@ impl App {
 
         let pinned = load_pins();
         let group_sep = config.as_ref().and_then(|c| c.group_name_separator.as_deref());
-        let opened = pre_open_groups(&sessions, group_sep);
+        let group_prefixes = extract_group_prefixes(&sessions, group_sep);
+        let opened: HashSet<NodeId> = group_prefixes.iter()
+            .map(|p| NodeId::Group(p.clone()))
+            .collect();
+        let seen_groups: HashSet<String> = group_prefixes.into_iter().collect();
         let flat_entries = tree::flatten(&sessions, &windows, &panes, &opened, &pinned, group_sep);
         let mut list_state = ListState::default();
         let initial_index = flat_entries
@@ -148,6 +153,7 @@ impl App {
             panes,
             flat_entries,
             opened,
+            seen_groups,
             list_state,
             preview_panes: Vec::new(),
             preview_title: String::new(),
@@ -184,8 +190,11 @@ impl App {
         }
 
         let group_sep = self.config.as_ref().and_then(|c| c.group_name_separator.as_deref());
-        for node_id in pre_open_groups(&self.sessions, group_sep) {
-            self.opened.insert(node_id);
+        for prefix in extract_group_prefixes(&self.sessions, group_sep) {
+            if !self.seen_groups.contains(&prefix) {
+                self.opened.insert(NodeId::Group(prefix.clone()));
+                self.seen_groups.insert(prefix);
+            }
         }
 
         self.rebuild_flat_entries();
