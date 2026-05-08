@@ -89,10 +89,10 @@ fn extract_group_prefixes(sessions: &[tmux::Session], separator: Option<&str>) -
     let mut seen = HashSet::new();
     let mut prefixes = Vec::new();
     for session in sessions.iter() {
-        if let Some((prefix, _)) = session.display_name.split_once(sep) {
-            if !prefix.is_empty() && seen.insert(prefix.to_string()) {
-                prefixes.push(prefix.to_string());
-            }
+        if let Some((prefix, _)) = session.display_name.split_once(sep)
+            && !prefix.is_empty() && seen.insert(prefix.to_string())
+        {
+            prefixes.push(prefix.to_string());
         }
     }
     prefixes
