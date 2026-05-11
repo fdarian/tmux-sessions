@@ -23,7 +23,7 @@ src/
 - **No destructuring**: Access struct fields directly (`obj.field`), never `let { field } = obj`
 - **No dummy/fallback values**: Propagate errors properly, don't use `unwrap_or("")` style fallbacks
 - **Flat-entry model**: Tree is flattened into `Vec<FlatEntry>` based on which nodes are in the `opened` set, rebuilt on expand/collapse/refresh
-- **NodeId**: Enum with `Session(id)` / `Window(session_id, window_id)` / `Pane(session_id, window_id, pane_id)` — used as tree identifier and for resolving actions
+- **NodeId**: Enum with `Group(prefix)` / `Session(id)` / `Window(session_id, window_id)` / `Pane(session_id, window_id, pane_id)` — used as tree identifier and for resolving actions; `Group` nodes are no-ops for select/kill/pin
 - **Tree rendering**: Manual connector characters (`├─>`, `└─>`, `│`) and `+`/`-` symbols matching tmux's native choose-tree
 - **Mode-style**: tmux mode-style is read at startup to derive `highlight_style` and `primary_color`
 
@@ -33,11 +33,13 @@ Optional config file at `~/.config/tmux-sessions/config.json`:
 
 ```json
 {
-  "formatter": "/path/to/format-session.sh"
+  "formatter": "/path/to/format-session.sh",
+  "group_name_separator": "/"
 }
 ```
 
 - **formatter**: Path to a script that receives the raw session name as its first argument and prints the formatted name to stdout
+- **group_name_separator**: Groups sessions by the prefix before the first occurrence of this separator in their `display_name`. Sessions without the separator appear ungrouped at the root level. Groups start expanded and can be collapsed/expanded with `h`/`l`. Pinned sessions are pulled out of their group and shown at the top (with the same separator as in flat mode); group counts reflect only unpinned members.
 - Missing config file → raw session names used (no error)
 - Invalid JSON → app fails to start with error
 - Formatter failure (missing script, non-zero exit, empty output) → per-session fallback to raw name

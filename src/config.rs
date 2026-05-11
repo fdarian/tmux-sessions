@@ -8,6 +8,7 @@ use crate::tmux;
 #[derive(Deserialize)]
 pub struct Config {
     pub formatter: Option<String>,
+    pub group_name_separator: Option<String>,
 }
 
 pub fn load_config() -> io::Result<Option<Config>> {

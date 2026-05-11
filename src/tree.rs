@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use fuzzy_matcher::FuzzyMatcher;
 use ratatui::style::{Color, Style};
@@ -8,6 +8,18 @@ use crate::tmux;
 
 fn session_text(session: &tmux::Session) -> String {
     let mut text = format!("{}: {} windows", session.display_name, session.window_count);
+    if session.attached {
+        text.push_str(" (attached)");
+    }
+    text
+}
+
+fn session_text_with_suffix(session: &tmux::Session, separator: &str) -> String {
+    let suffix = session.display_name
+        .split_once(separator)
+        .expect("caller must guarantee separator is present in display_name")
+        .1;
+    let mut text = format!("{}: {} windows", suffix, session.window_count);
     if session.attached {
         text.push_str(" (attached)");
     }
@@ -37,6 +49,7 @@ fn pane_text(pane: &tmux::Pane) -> String {
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum NodeId {
+    Group(String),
     Session(String),
     Window(String, String),
     Pane(String, String, String),
@@ -123,20 +136,142 @@ fn flatten_session_list(
     }
 }
 
+fn flatten_group_sessions(
+    sessions: &[&tmux::Session],
+    windows: &[tmux::Window],
+    panes: &[tmux::Pane],
+    opened: &HashSet<NodeId>,
+    entries: &mut Vec<FlatEntry>,
+    separator: &str,
+) {
+    for (si, session) in sessions.iter().enumerate() {
+        let session_is_last = si == sessions.len() - 1;
+        let has_children = windows.iter().any(|w| w.session_id == session.id);
+
+        entries.push(FlatEntry {
+            node_id: NodeId::Session(session.id.clone()),
+            depth: 1,
+            has_children,
+            is_last_sibling: session_is_last,
+            ancestor_is_last: vec![],
+            text: session_text_with_suffix(session, separator),
+        });
+
+        if !opened.contains(&NodeId::Session(session.id.clone())) {
+            continue;
+        }
+
+        let session_windows: Vec<&tmux::Window> =
+            windows.iter().filter(|w| w.session_id == session.id).collect();
+
+        for (wi, window) in session_windows.iter().enumerate() {
+            let window_is_last = wi == session_windows.len() - 1;
+            let has_children = panes
+                .iter()
+                .any(|p| p.session_id == session.id && p.window_id == window.id);
+
+            entries.push(FlatEntry {
+                node_id: NodeId::Window(session.id.clone(), window.id.clone()),
+                depth: 2,
+                has_children,
+                is_last_sibling: window_is_last,
+                ancestor_is_last: vec![session_is_last],
+                text: window_text(window),
+            });
+
+            if !opened.contains(&NodeId::Window(session.id.clone(), window.id.clone())) {
+                continue;
+            }
+
+            let window_panes: Vec<&tmux::Pane> = panes
+                .iter()
+                .filter(|p| p.session_id == session.id && p.window_id == window.id)
+                .collect();
+
+            for (pi, pane) in window_panes.iter().enumerate() {
+                let pane_is_last = pi == window_panes.len() - 1;
+                entries.push(FlatEntry {
+                    node_id: NodeId::Pane(
+                        session.id.clone(),
+                        window.id.clone(),
+                        pane.id.clone(),
+                    ),
+                    depth: 3,
+                    has_children: false,
+                    is_last_sibling: pane_is_last,
+                    ancestor_is_last: vec![session_is_last, window_is_last],
+                    text: pane_text(pane),
+                });
+            }
+        }
+    }
+}
+
+fn flatten_grouped(
+    sessions: &[&tmux::Session],
+    windows: &[tmux::Window],
+    panes: &[tmux::Pane],
+    opened: &HashSet<NodeId>,
+    entries: &mut Vec<FlatEntry>,
+    separator: &str,
+) {
+    let mut group_order: Vec<String> = Vec::new();
+    let mut group_map: HashMap<String, Vec<&tmux::Session>> = HashMap::new();
+    let mut ungrouped: Vec<&tmux::Session> = Vec::new();
+
+    for session in sessions.iter() {
+        let mut parts = session.display_name.splitn(2, separator);
+        let prefix = parts.next().unwrap_or("");
+        let suffix = parts.next().unwrap_or("");
+        if !prefix.is_empty() && !suffix.is_empty() {
+            if !group_map.contains_key(prefix) {
+                group_order.push(prefix.to_string());
+                group_map.insert(prefix.to_string(), Vec::new());
+            }
+            group_map.get_mut(prefix).unwrap().push(*session);
+        } else {
+            ungrouped.push(*session);
+        }
+    }
+
+    for prefix in &group_order {
+        let group_sessions = group_map.get(prefix).unwrap();
+        let count = group_sessions.len();
+        let is_expanded = opened.contains(&NodeId::Group(prefix.clone()));
+
+        entries.push(FlatEntry {
+            node_id: NodeId::Group(prefix.clone()),
+            depth: 0,
+            has_children: true,
+            is_last_sibling: false,
+            ancestor_is_last: vec![],
+            text: format!("{} ({})", prefix, count),
+        });
+
+        if is_expanded {
+            flatten_group_sessions(group_sessions, windows, panes, opened, entries, separator);
+        }
+    }
+
+    flatten_session_list(&ungrouped, windows, panes, opened, entries);
+}
+
 pub fn flatten(
     sessions: &[tmux::Session],
     windows: &[tmux::Window],
     panes: &[tmux::Pane],
     opened: &HashSet<NodeId>,
     pinned: &HashSet<String>,
+    group_separator: Option<&str>,
 ) -> Vec<FlatEntry> {
+    let mut entries = Vec::new();
+
     let pinned_sessions: Vec<&tmux::Session> =
         sessions.iter().filter(|s| pinned.contains(&s.name)).collect();
     let unpinned_sessions: Vec<&tmux::Session> =
         sessions.iter().filter(|s| !pinned.contains(&s.name)).collect();
 
-    let mut entries = Vec::new();
-
+    // Pinned always render flat at the top, regardless of grouping.
     flatten_session_list(&pinned_sessions, windows, panes, opened, &mut entries);
 
     if !pinned_sessions.is_empty() && !unpinned_sessions.is_empty() {
@@ -150,7 +285,14 @@ pub fn flatten(
         });
     }
 
-    flatten_session_list(&unpinned_sessions, windows, panes, opened, &mut entries);
+    match group_separator {
+        Some(sep) => flatten_grouped(
+            &unpinned_sessions, windows, panes, opened, &mut entries, sep,
+        ),
+        None => flatten_session_list(
+            &unpinned_sessions, windows, panes, opened, &mut entries,
+        ),
+    }
 
     entries
 }
