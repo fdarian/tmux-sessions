@@ -704,11 +704,17 @@ impl App {
                 self.filter_cursor = self.filter_query.chars().count();
             }
             Action::ExitFilter => {
+                let selected_node_id = self.list_state.selected()
+                    .and_then(|i| self.flat_entries.get(i))
+                    .map(|e| e.node_id.clone());
                 self.filter_query = String::new();
                 self.filter_cursor = 0;
                 self.mode = Mode::Normal;
                 self.rebuild_flat_entries();
-                self.list_state.select(Some(0));
+                let new_index = selected_node_id
+                    .and_then(|id| self.flat_entries.iter().position(|e| e.node_id == id))
+                    .unwrap_or(0);
+                self.list_state.select(Some(new_index));
                 self.update_preview();
             }
             Action::SelectIndex(i) => {
