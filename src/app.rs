@@ -230,10 +230,48 @@ impl App {
         };
 
         let node_id = &self.flat_entries[i].node_id;
+        let bound_session_id = self.flat_entries[i].bound_session_id.clone();
         match node_id {
-            NodeId::Separator | NodeId::Group(_) => {
+            NodeId::Separator => {
                 self.preview_panes.clear();
                 self.preview_title.clear();
+            }
+            NodeId::Group(_) => {
+                match bound_session_id {
+                    None => {
+                        self.preview_panes.clear();
+                        self.preview_title.clear();
+                    }
+                    Some(ref session_id) => {
+                        let session_name = self.sessions.iter()
+                            .find(|s| s.id == *session_id)
+                            .map(|s| s.display_name.clone())
+                            .unwrap_or_else(|| session_id.clone());
+                        self.preview_title = session_name;
+
+                        let session_windows: Vec<&tmux::Window> = self.windows.iter()
+                            .filter(|w| w.session_id == *session_id)
+                            .collect();
+
+                        self.preview_panes = session_windows.iter().map(|window| {
+                            let pane_id = self.panes.iter()
+                                .find(|p| p.session_id == *session_id && p.window_id == window.id && p.active)
+                                .or_else(|| self.panes.iter().find(|p| p.session_id == *session_id && p.window_id == window.id))
+                                .map(|p| p.id.clone());
+
+                            let content = match pane_id {
+                                Some(id) => tmux::capture_pane_raw(&id).unwrap_or_default(),
+                                None => Vec::new(),
+                            };
+
+                            PreviewPane {
+                                label: format!("{}:{}", window.index, window.name),
+                                content,
+                                is_active: window.active,
+                            }
+                        }).collect();
+                    }
+                }
             }
             NodeId::Session(session_id) => {
                 let session_name = self.sessions.iter()
@@ -311,8 +349,15 @@ impl App {
         };
 
         let node_id = &self.flat_entries[i].node_id;
+        let bound_session_id = self.flat_entries[i].bound_session_id.clone();
         match node_id {
-            NodeId::Separator | NodeId::Group(_) => (Vec::new(), 0),
+            NodeId::Separator => (Vec::new(), 0),
+            NodeId::Group(_) => {
+                match bound_session_id {
+                    None => (Vec::new(), 0),
+                    Some(session_id) => self.build_full_preview_for_session(&session_id),
+                }
+            }
             NodeId::Pane(session_id, window_id, pane_id) => {
                 let session = self.sessions.iter().find(|s| s.id == *session_id);
                 let window = self.windows.iter().find(|w| w.id == *window_id);
@@ -366,58 +411,60 @@ impl App {
 
                 (previews, initial_index)
             }
-            NodeId::Session(session_id) => {
-                let session = self.sessions.iter().find(|s| s.id == *session_id);
-                let session_name = session.map(|s| s.display_name.clone()).unwrap_or_else(|| session_id.clone());
+            NodeId::Session(session_id) => self.build_full_preview_for_session(session_id),
+        }
+    }
 
-                let mut session_windows: Vec<&tmux::Window> = self.windows.iter()
-                    .filter(|w| w.session_id == *session_id)
-                    .collect();
-                session_windows.sort_by(|a, b| a.index.cmp(&b.index));
+    fn build_full_preview_for_session(&self, session_id: &str) -> (Vec<PreviewFullPane>, usize) {
+        let session = self.sessions.iter().find(|s| s.id == session_id);
+        let session_name = session.map(|s| s.display_name.clone()).unwrap_or_else(|| session_id.to_string());
 
-                let mut previews = Vec::new();
-                let mut initial_index = 0;
-                let mut found_active = false;
-                let mut first_active_fallback = None;
+        let mut session_windows: Vec<&tmux::Window> = self.windows.iter()
+            .filter(|w| w.session_id == session_id)
+            .collect();
+        session_windows.sort_by(|a, b| a.index.cmp(&b.index));
 
-                for window in &session_windows {
-                    let mut window_panes: Vec<&tmux::Pane> = self.panes.iter()
-                        .filter(|p| p.session_id == *session_id && p.window_id == window.id)
-                        .collect();
-                    window_panes.sort_by(|a, b| a.index.cmp(&b.index));
+        let mut previews = Vec::new();
+        let mut initial_index = 0;
+        let mut found_active = false;
+        let mut first_active_fallback = None;
 
-                    for pane in &window_panes {
-                        if !found_active && window.active && pane.active {
-                            initial_index = previews.len();
-                            found_active = true;
-                        }
-                        if first_active_fallback.is_none() && pane.active {
-                            first_active_fallback = Some(previews.len());
-                        }
+        for window in &session_windows {
+            let mut window_panes: Vec<&tmux::Pane> = self.panes.iter()
+                .filter(|p| p.session_id == session_id && p.window_id == window.id)
+                .collect();
+            window_panes.sort_by(|a, b| a.index.cmp(&b.index));
 
-                        let window_label = format!("{}:{}", window.index, window.name);
-                        let pane_label = format!("{}:{}", pane.index, pane.current_command);
-                        let content = tmux::capture_pane_raw(&pane.id).unwrap_or_default();
-
-                        previews.push(PreviewFullPane {
-                            session_id: session_id.clone(),
-                            window_id: window.id.clone(),
-                            pane_id: pane.id.clone(),
-                            session_name: session_name.clone(),
-                            window_label,
-                            pane_label,
-                            content,
-                        });
-                    }
+            for pane in &window_panes {
+                if !found_active && window.active && pane.active {
+                    initial_index = previews.len();
+                    found_active = true;
+                }
+                if first_active_fallback.is_none() && pane.active {
+                    first_active_fallback = Some(previews.len());
                 }
 
-                if !found_active {
-                    initial_index = first_active_fallback.unwrap_or(0);
-                }
+                let window_label = format!("{}:{}", window.index, window.name);
+                let pane_label = format!("{}:{}", pane.index, pane.current_command);
+                let content = tmux::capture_pane_raw(&pane.id).unwrap_or_default();
 
-                (previews, initial_index)
+                previews.push(PreviewFullPane {
+                    session_id: session_id.to_string(),
+                    window_id: window.id.clone(),
+                    pane_id: pane.id.clone(),
+                    session_name: session_name.clone(),
+                    window_label,
+                    pane_label,
+                    content,
+                });
             }
         }
+
+        if !found_active {
+            initial_index = first_active_fallback.unwrap_or(0);
+        }
+
+        (previews, initial_index)
     }
 
     pub fn handle_action(&mut self, action: Action) {
@@ -458,7 +505,11 @@ impl App {
                     NodeId::Session(id) => id.clone(),
                     NodeId::Window(session_id, _) => session_id.clone(),
                     NodeId::Pane(session_id, _, _) => session_id.clone(),
-                    NodeId::Separator | NodeId::Group(_) => return,
+                    NodeId::Separator => return,
+                    NodeId::Group(_) => match self.flat_entries[i].bound_session_id.clone() {
+                        Some(id) => id,
+                        None => return,
+                    },
                 };
                 let session_name = match self.sessions.iter().find(|s| s.id == session_id) {
                     Some(s) => s.name.clone(),
@@ -733,7 +784,9 @@ impl App {
             _ => return,
         };
 
-        let node_id = &self.flat_entries[i].node_id;
+        let entry = &self.flat_entries[i];
+        let node_id = &entry.node_id;
+        let bound_session_id = entry.bound_session_id.as_deref();
         let result = match node_id {
             NodeId::Session(id) => tmux::switch_client(id),
             NodeId::Window(session_id, window_id) => tmux::switch_client(session_id)
@@ -741,7 +794,11 @@ impl App {
             NodeId::Pane(session_id, window_id, pane_id) => tmux::switch_client(session_id)
                 .and_then(|_| tmux::select_window(window_id))
                 .and_then(|_| tmux::select_pane(pane_id)),
-            NodeId::Separator | NodeId::Group(_) => return,
+            NodeId::Separator => return,
+            NodeId::Group(_) => match bound_session_id {
+                Some(id) => tmux::switch_client(id),
+                None => return,
+            },
         };
 
         if result.is_ok() {
@@ -755,8 +812,10 @@ impl App {
             _ => return,
         };
 
-        if matches!(self.flat_entries[i].node_id, NodeId::Separator | NodeId::Group(_)) {
-            return;
+        match &self.flat_entries[i].node_id {
+            NodeId::Separator => return,
+            NodeId::Group(_) if self.flat_entries[i].bound_session_id.is_none() => return,
+            _ => {}
         }
 
         self.confirming_node = Some(self.flat_entries[i].node_id.clone());
@@ -769,7 +828,14 @@ impl App {
             None => return,
         };
 
-        let is_current_session = matches!(&node_id, NodeId::Session(id) if *id == self.current_session_id);
+        let is_current_session = match &node_id {
+            NodeId::Session(id) => *id == self.current_session_id,
+            NodeId::Group(_) => self.flat_entries.iter()
+                .find(|e| e.node_id == node_id)
+                .and_then(|e| e.bound_session_id.as_deref())
+                .map_or(false, |sid| sid == self.current_session_id),
+            _ => false,
+        };
 
         if is_current_session {
             let alternate = self
@@ -790,7 +856,16 @@ impl App {
             NodeId::Session(id) => tmux::kill_session(id),
             NodeId::Window(_, window_id) => tmux::kill_window(window_id),
             NodeId::Pane(_, _, pane_id) => tmux::kill_pane(pane_id),
-            NodeId::Separator | NodeId::Group(_) => return,
+            NodeId::Separator => return,
+            NodeId::Group(_) => {
+                let session_id = self.flat_entries.iter()
+                    .find(|e| e.node_id == node_id)
+                    .and_then(|e| e.bound_session_id.clone());
+                match session_id {
+                    Some(id) => tmux::kill_session(&id),
+                    None => return,
+                }
+            }
         };
 
         self.mode = Mode::Normal;
@@ -825,7 +900,22 @@ impl App {
             NodeId::Pane(_, _, pane_id) => {
                 format!("pane {}", pane_id)
             }
-            NodeId::Separator | NodeId::Group(_) => return None,
+            NodeId::Separator => return None,
+            NodeId::Group(_) => {
+                let session_id = self.flat_entries.iter()
+                    .find(|e| e.node_id == *node_id)
+                    .and_then(|e| e.bound_session_id.as_deref().map(|s| s.to_string()));
+                match session_id {
+                    None => return None,
+                    Some(id) => {
+                        let name = self.sessions.iter()
+                            .find(|s| s.id == id)
+                            .map(|s| s.display_name.clone())
+                            .unwrap_or_else(|| id.clone());
+                        format!("session \"{}\"", name)
+                    }
+                }
+            }
         };
         Some(label)
     }
