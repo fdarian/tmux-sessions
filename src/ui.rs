@@ -29,11 +29,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 }
 
 fn render_tree(frame: &mut Frame, app: &mut App, area: Rect) {
-    let key_width = if app.flat_entries.is_empty() {
-        3
-    } else {
-        format!("({})", app.flat_entries.len() - 1).len()
-    };
+    let key_width = if app.flat_entries.len() > 10 { 5 } else { 3 };
 
     let items: Vec<ListItem> = app
         .flat_entries

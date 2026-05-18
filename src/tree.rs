@@ -383,7 +383,7 @@ pub fn format_line(
         Some(label) => format!("({})", label),
         None => " ".repeat(key_width),
     };
-    let mut result = format!("{:>width$} ", key_str, width = key_width);
+    let mut result = format!("{:<width$} ", key_str, width = key_width);
 
     if entry.depth > 0 {
         // Ancestor columns: one 4-char column per ancestor level
