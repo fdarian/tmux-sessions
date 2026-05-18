@@ -63,6 +63,7 @@ pub struct FlatEntry {
     pub is_last_sibling: bool,
     pub ancestor_is_last: Vec<bool>,
     pub text: String,
+    pub bound_session_id: Option<String>,
 }
 
 fn flatten_session_list(
@@ -83,6 +84,7 @@ fn flatten_session_list(
             is_last_sibling: session_is_last_sibling,
             ancestor_is_last: vec![],
             text: session_text(session),
+            bound_session_id: None,
         });
 
         if !opened.contains(&NodeId::Session(session.id.clone())) {
@@ -105,6 +107,7 @@ fn flatten_session_list(
                 is_last_sibling: window_is_last_sibling,
                 ancestor_is_last: vec![],
                 text: window_text(window),
+                bound_session_id: None,
             });
 
             if !opened.contains(&NodeId::Window(session.id.clone(), window.id.clone())) {
@@ -130,6 +133,7 @@ fn flatten_session_list(
                     is_last_sibling: pane_is_last_sibling,
                     ancestor_is_last: vec![window_is_last_sibling],
                     text: pane_text(pane),
+                    bound_session_id: None,
                 });
             }
         }
@@ -155,6 +159,7 @@ fn flatten_group_sessions(
             is_last_sibling: session_is_last,
             ancestor_is_last: vec![],
             text: session_text_with_suffix(session, separator),
+            bound_session_id: None,
         });
 
         if !opened.contains(&NodeId::Session(session.id.clone())) {
@@ -177,6 +182,7 @@ fn flatten_group_sessions(
                 is_last_sibling: window_is_last,
                 ancestor_is_last: vec![session_is_last],
                 text: window_text(window),
+                bound_session_id: None,
             });
 
             if !opened.contains(&NodeId::Window(session.id.clone(), window.id.clone())) {
@@ -201,6 +207,7 @@ fn flatten_group_sessions(
                     is_last_sibling: pane_is_last,
                     ancestor_is_last: vec![session_is_last, window_is_last],
                     text: pane_text(pane),
+                    bound_session_id: None,
                 });
             }
         }
@@ -234,10 +241,33 @@ fn flatten_grouped(
         }
     }
 
+    // Sessions whose display_name exactly matches a group prefix are absorbed into the group row.
+    let mut group_bound_session: HashMap<String, &tmux::Session> = HashMap::new();
+    let truly_ungrouped: Vec<&tmux::Session> = ungrouped.into_iter().filter(|session| {
+        if group_order.contains(&session.display_name) {
+            group_bound_session.insert(session.display_name.clone(), *session);
+            false
+        } else {
+            true
+        }
+    }).collect();
+
     for prefix in &group_order {
         let group_sessions = group_map.get(prefix).unwrap();
         let count = group_sessions.len();
         let is_expanded = opened.contains(&NodeId::Group(prefix.clone()));
+        let bound_session = group_bound_session.get(prefix).copied();
+
+        let text = if let Some(s) = bound_session {
+            let mut t = format!("{} ({})", prefix, count);
+            t.push_str(&format!(": {} windows", s.window_count));
+            if s.attached {
+                t.push_str(" (attached)");
+            }
+            t
+        } else {
+            format!("{} ({})", prefix, count)
+        };
 
         entries.push(FlatEntry {
             node_id: NodeId::Group(prefix.clone()),
@@ -245,7 +275,8 @@ fn flatten_grouped(
             has_children: true,
             is_last_sibling: false,
             ancestor_is_last: vec![],
-            text: format!("{} ({})", prefix, count),
+            text,
+            bound_session_id: bound_session.map(|s| s.id.clone()),
         });
 
         if is_expanded {
@@ -253,7 +284,7 @@ fn flatten_grouped(
         }
     }
 
-    flatten_session_list(&ungrouped, windows, panes, opened, entries);
+    flatten_session_list(&truly_ungrouped, windows, panes, opened, entries);
 }
 
 pub fn flatten(
@@ -282,6 +313,7 @@ pub fn flatten(
             is_last_sibling: false,
             ancestor_is_last: vec![],
             text: String::new(),
+            bound_session_id: None,
         });
     }
 
@@ -316,6 +348,7 @@ pub fn flatten_filtered(
                 is_last_sibling: false,
                 ancestor_is_last: vec![],
                 text,
+                bound_session_id: None,
             }));
         }
     }
