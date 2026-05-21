@@ -1,0 +1,9 @@
+[[post-start]]
+claude_local_md = '''cat > CLAUDE.local.md <<'EOF'
+# Worktree Context
+
+This checkout lives at `{{ worktree_path }}` on branch `{{ branch }}`.
+
+**This path is the canonical project root.** Do not substitute `{{ repo_path }}/<rest>` — files differ across worktrees.
+EOF'''
+
