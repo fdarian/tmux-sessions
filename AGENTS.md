@@ -71,6 +71,7 @@ cargo run
 | `Space` | Open fullscreen preview |
 | `Enter` | Switch to selected |
 | `p` | Toggle pin selected session |
+| `Shift+K` / `Shift+J` | Move pinned session up / down (no-op if not pinned) |
 | `x` | Kill selected (with confirmation) |
 | `r` | Refresh tree |
 | `q` | Quit |

@@ -292,13 +292,14 @@ pub fn flatten(
     windows: &[tmux::Window],
     panes: &[tmux::Pane],
     opened: &HashSet<NodeId>,
-    pinned: &HashSet<String>,
+    pinned: &[String],
     group_separator: Option<&str>,
 ) -> Vec<FlatEntry> {
     let mut entries = Vec::new();
 
-    let pinned_sessions: Vec<&tmux::Session> =
-        sessions.iter().filter(|s| pinned.contains(&s.name)).collect();
+    let pinned_sessions: Vec<&tmux::Session> = pinned.iter()
+        .filter_map(|name| sessions.iter().find(|s| s.name == *name))
+        .collect();
     let unpinned_sessions: Vec<&tmux::Session> =
         sessions.iter().filter(|s| !pinned.contains(&s.name)).collect();
 
