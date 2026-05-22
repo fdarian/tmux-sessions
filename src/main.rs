@@ -7,7 +7,9 @@ mod ui;
 
 use std::env;
 
-use crossterm::event::{read, Event};
+use std::time::Duration;
+
+use crossterm::event::{poll, read, Event};
 
 fn main() {
     if env::var("TMUX").is_err() {
@@ -33,6 +35,13 @@ fn main() {
         if let Ok(Event::Key(key)) = read() {
             let action = event::map_key(key, &app.mode);
             app.handle_action(action);
+            // Drain any immediately-available events (e.g. modifier key + char from same keystroke).
+            while poll(Duration::ZERO).unwrap_or(false) {
+                if let Ok(Event::Key(key)) = read() {
+                    let action = event::map_key(key, &app.mode);
+                    app.handle_action(action);
+                }
+            }
         }
 
         if app.should_quit {

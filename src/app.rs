@@ -15,28 +15,36 @@ fn pins_path() -> io::Result<String> {
     Ok(format!("{}/.config/tmux-sessions/pins.json", home))
 }
 
-fn load_pins() -> HashSet<String> {
+fn load_pins() -> Vec<String> {
     let path = match pins_path() {
         Ok(p) => p,
-        Err(_) => return HashSet::new(),
+        Err(_) => return Vec::new(),
     };
     let content = match std::fs::read_to_string(&path) {
         Ok(c) => c,
-        Err(_) => return HashSet::new(),
+        Err(_) => return Vec::new(),
     };
-    serde_json::from_str::<Vec<String>>(&content)
-        .map(|v| v.into_iter().collect())
-        .unwrap_or_default()
+    match serde_json::from_str::<Vec<String>>(&content) {
+        Ok(v) => v,
+        Err(e) => {
+            let ts = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            let backup = format!("{}.broken.{}", path, ts);
+            let _ = std::fs::rename(&path, &backup);
+            eprintln!("tmux-sessions: pins.json was corrupt ({e}); moved to {backup}");
+            Vec::new()
+        }
+    }
 }
 
-fn save_pins(pinned: &HashSet<String>) {
+fn save_pins(pinned: &[String]) {
     let path = match pins_path() {
         Ok(p) => p,
         Err(_) => return,
     };
-    let mut names: Vec<&String> = pinned.iter().collect();
-    names.sort();
-    if let Ok(json) = serde_json::to_string(&names) {
+    if let Ok(json) = serde_json::to_string(pinned) {
         let _ = std::fs::write(&path, json);
     }
 }
@@ -78,7 +86,7 @@ pub struct App {
     pub primary_color: Color,
     pub filter_query: String,
     pub filter_cursor: usize,
-    pub pinned: HashSet<String>,
+    pub pinned: Vec<String>,
 }
 
 fn extract_group_prefixes(sessions: &[tmux::Session], separator: Option<&str>) -> Vec<String> {
@@ -516,9 +524,9 @@ impl App {
                     None => return,
                 };
                 if self.pinned.contains(&session_name) {
-                    self.pinned.remove(&session_name);
+                    self.pinned.retain(|p| *p != session_name);
                 } else {
-                    self.pinned.insert(session_name);
+                    self.pinned.push(session_name);
                 }
                 save_pins(&self.pinned);
                 let current_node_id = self.flat_entries[i].node_id.clone();
@@ -528,6 +536,8 @@ impl App {
                 }
                 self.update_preview();
             }
+            Action::MovePinUp => self.move_pin(-1),
+            Action::MovePinDown => self.move_pin(1),
             Action::CollapseOrParent => {
                 if let Some(i) = self.list_state.selected() {
                     let node_id = self.flat_entries[i].node_id.clone();
@@ -776,6 +786,44 @@ impl App {
             }
             Action::None => {}
         }
+    }
+
+    fn move_pin(&mut self, direction: i8) {
+        let i = match self.list_state.selected() {
+            Some(i) if i < self.flat_entries.len() => i,
+            _ => return,
+        };
+        let session_id = match &self.flat_entries[i].node_id {
+            NodeId::Session(id) => id.clone(),
+            NodeId::Window(session_id, _) => session_id.clone(),
+            NodeId::Pane(session_id, _, _) => session_id.clone(),
+            NodeId::Group(_) => match self.flat_entries[i].bound_session_id.clone() {
+                Some(id) => id,
+                None => return,
+            },
+            NodeId::Separator => return,
+        };
+        let session_name = match self.sessions.iter().find(|s| s.id == session_id) {
+            Some(s) => s.name.clone(),
+            None => return,
+        };
+        let pos = match self.pinned.iter().position(|p| *p == session_name) {
+            Some(p) => p,
+            None => return,
+        };
+        let new_pos = match direction {
+            -1 if pos > 0 => pos - 1,
+            1 if pos + 1 < self.pinned.len() => pos + 1,
+            _ => return,
+        };
+        self.pinned.swap(pos, new_pos);
+        save_pins(&self.pinned);
+        let current_node_id = self.flat_entries[i].node_id.clone();
+        self.rebuild_flat_entries();
+        if let Some(new_i) = self.flat_entries.iter().position(|e| e.node_id == current_node_id) {
+            self.list_state.select(Some(new_i));
+        }
+        self.update_preview();
     }
 
     fn select_current(&mut self) {
