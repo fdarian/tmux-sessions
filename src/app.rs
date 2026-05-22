@@ -511,7 +511,7 @@ impl App {
                     Some(s) => s.name.clone(),
                     None => return,
                 };
-                if self.pinned.iter().any(|p| *p == session_name) {
+                if self.pinned.contains(&session_name) {
                     self.pinned.retain(|p| *p != session_name);
                 } else {
                     self.pinned.push(session_name);
@@ -799,11 +799,12 @@ impl App {
             Some(p) => p,
             None => return,
         };
-        let new_pos = pos as i64 + direction as i64;
-        if new_pos < 0 || new_pos >= self.pinned.len() as i64 {
-            return;
-        }
-        self.pinned.swap(pos, new_pos as usize);
+        let new_pos = match direction {
+            -1 if pos > 0 => pos - 1,
+            1 if pos + 1 < self.pinned.len() => pos + 1,
+            _ => return,
+        };
+        self.pinned.swap(pos, new_pos);
         save_pins(&self.pinned);
         let current_node_id = self.flat_entries[i].node_id.clone();
         self.rebuild_flat_entries();
