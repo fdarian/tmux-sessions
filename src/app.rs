@@ -24,7 +24,19 @@ fn load_pins() -> Vec<String> {
         Ok(c) => c,
         Err(_) => return Vec::new(),
     };
-    serde_json::from_str::<Vec<String>>(&content).unwrap_or_default()
+    match serde_json::from_str::<Vec<String>>(&content) {
+        Ok(v) => v,
+        Err(e) => {
+            let ts = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            let backup = format!("{}.broken.{}", path, ts);
+            let _ = std::fs::rename(&path, &backup);
+            eprintln!("tmux-sessions: pins.json was corrupt ({e}); moved to {backup}");
+            Vec::new()
+        }
+    }
 }
 
 fn save_pins(pinned: &[String]) {
