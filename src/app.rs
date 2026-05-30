@@ -1,13 +1,15 @@
 use std::collections::HashSet;
 use std::io;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use ratatui::style::{Color, Style};
 use ratatui::widgets::ListState;
 
 use crate::config;
 use crate::event::{Action, Mode};
+use crate::history::{self, HistoryEntry};
 use crate::tmux;
-use crate::tree::{self, FlatEntry, NodeId};
+use crate::tree::{self, DeadSessionRef, FlatEntry, NodeId};
 
 fn pins_path() -> io::Result<String> {
     let home = std::env::var("HOME")
@@ -65,6 +67,13 @@ pub struct PreviewFullPane {
     pub content: Vec<u8>,
 }
 
+pub struct DeadSession {
+    pub name: String,
+    pub display_name: String,
+    pub cwd: String,
+    pub last_seen: u64,
+}
+
 pub struct App {
     pub config: Option<config::Config>,
     pub current_session_id: String,
@@ -87,6 +96,36 @@ pub struct App {
     pub filter_query: String,
     pub filter_cursor: usize,
     pub pinned: Vec<String>,
+    pub dead_sessions: Vec<DeadSession>,
+}
+
+fn current_unix_secs() -> io::Result<u64> {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("system clock error: {}", e)))
+}
+
+fn compute_dead_sessions(
+    history: &[HistoryEntry],
+    live_sessions: &[tmux::Session],
+    config: &Option<config::Config>,
+) -> Vec<DeadSession> {
+    let live_names: HashSet<&str> = live_sessions.iter().map(|s| s.name.as_str()).collect();
+    history
+        .iter()
+        .filter(|e| !live_names.contains(e.name.as_str()))
+        .map(|e| {
+            let mut display_name = e.name.clone();
+            config::apply_formatter_to_name(&mut display_name, config);
+            DeadSession {
+                name: e.name.clone(),
+                display_name,
+                cwd: e.cwd.clone(),
+                last_seen: e.last_seen,
+            }
+        })
+        .collect()
 }
 
 fn extract_group_prefixes(sessions: &[tmux::Session], separator: Option<&str>) -> Vec<String> {
@@ -117,6 +156,11 @@ impl App {
         sessions.sort_by(|a, b| b.activity.cmp(&a.activity));
         let windows = tmux::list_windows()?;
         let panes = tmux::list_panes()?;
+
+        let mut history_entries = history::load_history();
+        let now = current_unix_secs()?;
+        history::upsert_live_sessions(&mut history_entries, &sessions, now);
+        let dead_sessions = compute_dead_sessions(&history_entries, &sessions, &config);
 
         let pinned = load_pins();
         let group_sep = config.as_ref().and_then(|c| c.group_name_separator.as_deref());
@@ -177,6 +221,7 @@ impl App {
             filter_query: String::new(),
             filter_cursor: 0,
             pinned,
+            dead_sessions,
         };
         app.update_preview();
         Ok(app)
@@ -198,6 +243,11 @@ impl App {
             self.should_quit = true;
             return Ok(());
         }
+
+        let mut history_entries = history::load_history();
+        let now = current_unix_secs()?;
+        history::upsert_live_sessions(&mut history_entries, &self.sessions, now);
+        self.dead_sessions = compute_dead_sessions(&history_entries, &self.sessions, &self.config);
 
         let group_sep = self.config.as_ref().and_then(|c| c.group_name_separator.as_deref());
         for prefix in extract_group_prefixes(&self.sessions, group_sep) {
@@ -223,7 +273,12 @@ impl App {
             let sep = self.config.as_ref().and_then(|c| c.group_name_separator.as_deref());
             self.flat_entries = tree::flatten(&self.sessions, &self.windows, &self.panes, &self.opened, &self.pinned, sep);
         } else {
-            self.flat_entries = tree::flatten_filtered(&self.sessions, &self.windows, &self.filter_query);
+            let dead_refs: Vec<DeadSessionRef<'_>> = self.dead_sessions.iter().map(|d| DeadSessionRef {
+                name: &d.name,
+                display_name: &d.display_name,
+                last_seen: d.last_seen,
+            }).collect();
+            self.flat_entries = tree::flatten_filtered(&self.sessions, &self.windows, &dead_refs, &self.filter_query);
         }
     }
 
@@ -240,7 +295,7 @@ impl App {
         let node_id = &self.flat_entries[i].node_id;
         let bound_session_id = self.flat_entries[i].bound_session_id.clone();
         match node_id {
-            NodeId::Separator => {
+            NodeId::Separator | NodeId::DeadSession(_) => {
                 self.preview_panes.clear();
                 self.preview_title.clear();
             }
@@ -359,7 +414,7 @@ impl App {
         let node_id = &self.flat_entries[i].node_id;
         let bound_session_id = self.flat_entries[i].bound_session_id.clone();
         match node_id {
-            NodeId::Separator => (Vec::new(), 0),
+            NodeId::Separator | NodeId::DeadSession(_) => (Vec::new(), 0),
             NodeId::Group(_) => {
                 match bound_session_id {
                     None => (Vec::new(), 0),
@@ -513,7 +568,7 @@ impl App {
                     NodeId::Session(id) => id.clone(),
                     NodeId::Window(session_id, _) => session_id.clone(),
                     NodeId::Pane(session_id, _, _) => session_id.clone(),
-                    NodeId::Separator => return,
+                    NodeId::Separator | NodeId::DeadSession(_) => return,
                     NodeId::Group(_) => match self.flat_entries[i].bound_session_id.clone() {
                         Some(id) => id,
                         None => return,
@@ -801,7 +856,7 @@ impl App {
                 Some(id) => id,
                 None => return,
             },
-            NodeId::Separator => return,
+            NodeId::Separator | NodeId::DeadSession(_) => return,
         };
         let session_name = match self.sessions.iter().find(|s| s.id == session_id) {
             Some(s) => s.name.clone(),
@@ -847,6 +902,14 @@ impl App {
                 Some(id) => tmux::switch_client(id),
                 None => return,
             },
+            NodeId::DeadSession(name) => {
+                let cwd = match self.dead_sessions.iter().find(|d| d.name == *name) {
+                    Some(d) => d.cwd.clone(),
+                    None => return,
+                };
+                tmux::new_session(name, &cwd)
+                    .and_then(|_| tmux::switch_client(name))
+            }
         };
 
         if result.is_ok() {
@@ -861,7 +924,7 @@ impl App {
         };
 
         match &self.flat_entries[i].node_id {
-            NodeId::Separator => return,
+            NodeId::Separator | NodeId::DeadSession(_) => return,
             NodeId::Group(_) if self.flat_entries[i].bound_session_id.is_none() => return,
             _ => {}
         }
@@ -904,7 +967,7 @@ impl App {
             NodeId::Session(id) => tmux::kill_session(id),
             NodeId::Window(_, window_id) => tmux::kill_window(window_id),
             NodeId::Pane(_, _, pane_id) => tmux::kill_pane(pane_id),
-            NodeId::Separator => return,
+            NodeId::Separator | NodeId::DeadSession(_) => return,
             NodeId::Group(_) => {
                 let session_id = self.flat_entries.iter()
                     .find(|e| e.node_id == node_id)
@@ -948,7 +1011,7 @@ impl App {
             NodeId::Pane(_, _, pane_id) => {
                 format!("pane {}", pane_id)
             }
-            NodeId::Separator => return None,
+            NodeId::Separator | NodeId::DeadSession(_) => return None,
             NodeId::Group(_) => {
                 let session_id = self.flat_entries.iter()
                     .find(|e| e.node_id == *node_id)

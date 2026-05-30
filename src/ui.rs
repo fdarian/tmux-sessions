@@ -1,13 +1,13 @@
 use ansi_to_tui::IntoText;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
-use ratatui::style::{Color, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Span;
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Padding, Paragraph, Wrap};
 use ratatui::Frame;
 
 use crate::app::App;
 use crate::event::Mode;
-use crate::tree;
+use crate::tree::{self, NodeId};
 
 pub fn render(frame: &mut Frame, app: &mut App) {
     if app.mode == Mode::Previewing {
@@ -38,7 +38,12 @@ fn render_tree(frame: &mut Frame, app: &mut App, area: Rect) {
         .map(|(i, entry)| {
             let is_expanded = app.opened.contains(&entry.node_id);
             let line = tree::format_line(entry, i, is_expanded, key_width);
-            ListItem::new(line)
+            let item = ListItem::new(line);
+            if matches!(entry.node_id, NodeId::DeadSession(_)) {
+                item.style(Style::default().add_modifier(Modifier::DIM))
+            } else {
+                item
+            }
         })
         .collect();
 
