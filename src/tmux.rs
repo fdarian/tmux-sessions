@@ -11,6 +11,7 @@ pub struct Session {
     pub window_count: usize,
     pub attached: bool,
     pub activity: u64,
+    pub cwd: String,
 }
 
 #[derive(Clone)]
@@ -66,12 +67,12 @@ pub fn get_current_session_id() -> io::Result<String> {
 }
 
 pub fn list_sessions(current_session_id: &str) -> io::Result<Vec<Session>> {
-    let format = "#{session_id}\x1f#{session_name}\x1f#{session_windows}\x1f#{session_activity}";
+    let format = "#{session_id}\x1f#{session_name}\x1f#{session_windows}\x1f#{session_activity}\x1f#{session_path}";
     let output = run_tmux_output(&["list-sessions", "-F", format])?;
     let mut sessions = Vec::new();
     for line in output.lines() {
-        let parts: Vec<&str> = line.split('\x1f').collect();
-        if parts.len() != 4 {
+        let parts: Vec<&str> = line.splitn(5, '\x1f').collect();
+        if parts.len() != 5 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("unexpected field count in session line: {:?}", line),
@@ -96,9 +97,14 @@ pub fn list_sessions(current_session_id: &str) -> io::Result<Vec<Session>> {
             window_count,
             attached: parts[0] == current_session_id,
             activity,
+            cwd: parts[4].to_string(),
         });
     }
     Ok(sessions)
+}
+
+pub fn new_session(name: &str, cwd: &str) -> io::Result<()> {
+    run_tmux(&["new-session", "-d", "-s", name, "-c", cwd])
 }
 
 pub fn list_windows() -> io::Result<Vec<Window>> {
