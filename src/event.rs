@@ -35,6 +35,21 @@ pub enum Action {
     FilterCursorEnd,
     SelectIndex(usize),
     ExitFilter,
+    StartRename,
+    RenameChar(char),
+    RenameBackspace,
+    RenameDeleteForward,
+    RenameKillWord,
+    RenameKillLine,
+    RenameKillLineForward,
+    RenameCursorLeft,
+    RenameCursorRight,
+    RenameCursorWordLeft,
+    RenameCursorWordRight,
+    RenameCursorStart,
+    RenameCursorEnd,
+    ConfirmRename,
+    CancelRename,
     None,
 }
 
@@ -44,6 +59,7 @@ pub enum Mode {
     Confirming,
     Filtering,
     Previewing,
+    Renaming,
 }
 
 pub fn map_key(key: KeyEvent, mode: &Mode) -> Action {
@@ -66,7 +82,8 @@ pub fn map_key(key: KeyEvent, mode: &Mode) -> Action {
             (KeyCode::Char('K'), KeyModifiers::NONE | KeyModifiers::SHIFT) | (KeyCode::Char('k'), KeyModifiers::SHIFT) | (KeyCode::Up, KeyModifiers::SHIFT) => Action::MovePinUp,
             (KeyCode::Char('J'), KeyModifiers::NONE | KeyModifiers::SHIFT) | (KeyCode::Char('j'), KeyModifiers::SHIFT) | (KeyCode::Down, KeyModifiers::SHIFT) => Action::MovePinDown,
             (KeyCode::Char('x'), _) => Action::Kill,
-            (KeyCode::Char('r'), _) => Action::Refresh,
+            (KeyCode::Char('R'), KeyModifiers::NONE | KeyModifiers::SHIFT) | (KeyCode::Char('r'), KeyModifiers::SHIFT) => Action::Refresh,
+            (KeyCode::Char('r'), _) => Action::StartRename,
             (KeyCode::Char('/'), _) => Action::EnterFilter,
             (KeyCode::Char(c @ '0'..='9'), _) => Action::SelectIndex((c as u8 - b'0') as usize),
             (KeyCode::Char(c @ 'a'..='z'), KeyModifiers::ALT) => {
@@ -96,6 +113,23 @@ pub fn map_key(key: KeyEvent, mode: &Mode) -> Action {
             (KeyCode::Backspace, _) => Action::FilterBackspace,
             (KeyCode::Delete, _) => Action::FilterDeleteForward,
             (KeyCode::Char(c), _) if c.is_ascii_graphic() || c == ' ' => Action::FilterChar(c),
+            _ => Action::None,
+        },
+        Mode::Renaming => match (key.code, key.modifiers) {
+            (KeyCode::Esc, _) => Action::CancelRename,
+            (KeyCode::Enter, _) => Action::ConfirmRename,
+            (KeyCode::Char('a'), KeyModifiers::CONTROL) => Action::RenameCursorStart,
+            (KeyCode::Char('e'), KeyModifiers::CONTROL) => Action::RenameCursorEnd,
+            (KeyCode::Char('u'), KeyModifiers::CONTROL) | (KeyCode::Backspace, KeyModifiers::SUPER) => Action::RenameKillLine,
+            (KeyCode::Char('k'), KeyModifiers::CONTROL) => Action::RenameKillLineForward,
+            (KeyCode::Char('b'), KeyModifiers::CONTROL) | (KeyCode::Left, KeyModifiers::NONE) => Action::RenameCursorLeft,
+            (KeyCode::Char('f'), KeyModifiers::CONTROL) | (KeyCode::Right, KeyModifiers::NONE) => Action::RenameCursorRight,
+            (KeyCode::Left, KeyModifiers::ALT) => Action::RenameCursorWordLeft,
+            (KeyCode::Right, KeyModifiers::ALT) => Action::RenameCursorWordRight,
+            (KeyCode::Backspace, KeyModifiers::ALT) => Action::RenameKillWord,
+            (KeyCode::Backspace, _) => Action::RenameBackspace,
+            (KeyCode::Delete, _) => Action::RenameDeleteForward,
+            (KeyCode::Char(c), _) if c.is_ascii_graphic() || c == ' ' => Action::RenameChar(c),
             _ => Action::None,
         },
         Mode::Previewing => match (key.code, key.modifiers) {

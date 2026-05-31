@@ -258,6 +258,14 @@ pub fn kill_session(target: &str) -> io::Result<()> {
     run_tmux(&["kill-session", "-t", target])
 }
 
+pub fn rename_session(target: &str, new_name: &str) -> io::Result<()> {
+    run_tmux(&["rename-session", "-t", target, new_name])
+}
+
+pub fn rename_window(target: &str, new_name: &str) -> io::Result<()> {
+    run_tmux(&["rename-window", "-t", target, new_name])
+}
+
 pub fn kill_window(target: &str) -> io::Result<()> {
     run_tmux(&["kill-window", "-t", target])
 }

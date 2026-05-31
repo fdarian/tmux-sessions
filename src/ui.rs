@@ -1,11 +1,11 @@
 use ansi_to_tui::IntoText;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::Span;
+use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Padding, Paragraph, Wrap};
 use ratatui::Frame;
 
-use crate::app::App;
+use crate::app::{App, RenameTarget};
 use crate::event::Mode;
 use crate::tree::{self, NodeId};
 
@@ -25,6 +25,10 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     if app.mode == Mode::Confirming {
         render_confirmation(frame, app);
+    }
+
+    if app.mode == Mode::Renaming {
+        render_rename_input(frame, app);
     }
 }
 
@@ -178,6 +182,53 @@ fn render_confirmation(frame: &mut Frame, app: &App) {
         .block(Block::default().borders(Borders::ALL).title("Confirm").padding(Padding::vertical(1)))
         .alignment(Alignment::Center)
         .wrap(Wrap { trim: false });
+
+    frame.render_widget(popup, area);
+}
+
+fn render_rename_input(frame: &mut Frame, app: &App) {
+    let chars: Vec<char> = app.rename_buffer.chars().collect();
+    let before: String = chars[..app.rename_cursor].iter().collect();
+    let cursor_char = if app.rename_cursor < chars.len() {
+        chars[app.rename_cursor].to_string()
+    } else {
+        " ".to_string()
+    };
+    let after: String = if app.rename_cursor < chars.len() {
+        chars[app.rename_cursor + 1..].iter().collect()
+    } else {
+        String::new()
+    };
+
+    let input_line = Line::from(vec![
+        Span::raw(before),
+        Span::styled(
+            cursor_char,
+            Style::default()
+                .bg(Color::White)
+                .fg(Color::Black),
+        ),
+        Span::raw(after),
+    ]);
+    let hint_line = Line::from(
+        Span::styled(
+            "Enter confirm · Esc cancel",
+            Style::default().fg(Color::DarkGray),
+        )
+    );
+    let text = Text::from(vec![input_line, hint_line]);
+
+    let title = match app.renaming_target {
+        Some(RenameTarget::Window(_)) => "Rename window",
+        _ => "Rename session",
+    };
+
+    let area = centered_rect(50, 6, frame.area());
+    frame.render_widget(Clear, area);
+
+    let popup = Paragraph::new(text)
+        .block(Block::default().borders(Borders::ALL).title(title).padding(Padding::vertical(1)))
+        .alignment(Alignment::Left);
 
     frame.render_widget(popup, area);
 }
