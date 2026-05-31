@@ -30,6 +30,10 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     if app.mode == Mode::Renaming {
         render_rename_input(frame, app);
     }
+
+    if app.mode == Mode::About {
+        render_about(frame);
+    }
 }
 
 fn render_tree(frame: &mut Frame, app: &mut App, area: Rect) {
@@ -229,6 +233,29 @@ fn render_rename_input(frame: &mut Frame, app: &App) {
     let popup = Paragraph::new(text)
         .block(Block::default().borders(Borders::ALL).title(title).padding(Padding::vertical(1)))
         .alignment(Alignment::Left);
+
+    frame.render_widget(popup, area);
+}
+
+fn render_about(frame: &mut Frame) {
+    let name = env!("CARGO_PKG_NAME");
+    let version = env!("CARGO_PKG_VERSION");
+    let commit = env!("GIT_COMMIT");
+
+    let text = Text::from(vec![
+        Line::from(name).alignment(Alignment::Center),
+        Line::from(format!("v{} ({})", version, commit)).alignment(Alignment::Center),
+        Line::from(""),
+        Line::from(
+            Span::styled("[esc] close", Style::default().add_modifier(Modifier::DIM))
+        ).alignment(Alignment::Center),
+    ]);
+
+    let area = centered_rect(34, 7, frame.area());
+    frame.render_widget(Clear, area);
+
+    let popup = Paragraph::new(text)
+        .block(Block::default().borders(Borders::ALL).title("About").padding(Padding::vertical(1)));
 
     frame.render_widget(popup, area);
 }

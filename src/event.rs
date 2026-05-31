@@ -50,6 +50,8 @@ pub enum Action {
     RenameCursorEnd,
     ConfirmRename,
     CancelRename,
+    OpenAbout,
+    CloseAbout,
     None,
 }
 
@@ -60,6 +62,7 @@ pub enum Mode {
     Filtering,
     Previewing,
     Renaming,
+    About,
 }
 
 pub fn map_key(key: KeyEvent, mode: &Mode) -> Action {
@@ -85,6 +88,7 @@ pub fn map_key(key: KeyEvent, mode: &Mode) -> Action {
             (KeyCode::Char('R'), KeyModifiers::NONE | KeyModifiers::SHIFT) | (KeyCode::Char('r'), KeyModifiers::SHIFT) => Action::Refresh,
             (KeyCode::Char('r'), _) => Action::StartRename,
             (KeyCode::Char('/'), _) => Action::EnterFilter,
+            (KeyCode::Char('?'), _) => Action::OpenAbout,
             (KeyCode::Char(c @ '0'..='9'), _) => Action::SelectIndex((c as u8 - b'0') as usize),
             (KeyCode::Char(c @ 'a'..='z'), KeyModifiers::ALT) => {
                 Action::SelectIndex(10 + (c as u8 - b'a') as usize)
@@ -138,6 +142,9 @@ pub fn map_key(key: KeyEvent, mode: &Mode) -> Action {
             (KeyCode::Char('l'), _) | (KeyCode::Right, _) => Action::PreviewNext,
             (KeyCode::Enter, _) => Action::SelectPreviewPane,
             _ => Action::None,
+        },
+        Mode::About => match (key.code, key.modifiers) {
+            _ => Action::CloseAbout,
         },
     }
 }
