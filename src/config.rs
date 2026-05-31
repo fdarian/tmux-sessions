@@ -64,3 +64,13 @@ pub fn apply_formatter_to_sessions(sessions: &mut [tmux::Session], config: &Opti
         }
     }
 }
+
+pub fn apply_formatter_to_name(name: &mut String, config: &Option<Config>) {
+    let formatter = match config.as_ref().and_then(|c| c.formatter.as_deref()) {
+        Some(f) => f,
+        None => return,
+    };
+    if let Ok(formatted) = format_session_name(formatter, name) {
+        *name = formatted;
+    }
+}

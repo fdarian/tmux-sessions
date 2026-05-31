@@ -1,13 +1,13 @@
 use ansi_to_tui::IntoText;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::Span;
+use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Padding, Paragraph, Wrap};
 use ratatui::Frame;
 
-use crate::app::App;
+use crate::app::{App, RenameTarget};
 use crate::event::Mode;
-use crate::tree;
+use crate::tree::{self, NodeId};
 
 pub fn render(frame: &mut Frame, app: &mut App) {
     if app.mode == Mode::Previewing {
@@ -27,6 +27,10 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         render_confirmation(frame, app);
     }
 
+    if app.mode == Mode::Renaming {
+        render_rename_input(frame, app);
+    }
+
     if app.mode == Mode::About {
         render_about(frame);
     }
@@ -42,7 +46,12 @@ fn render_tree(frame: &mut Frame, app: &mut App, area: Rect) {
         .map(|(i, entry)| {
             let is_expanded = app.opened.contains(&entry.node_id);
             let line = tree::format_line(entry, i, is_expanded, key_width);
-            ListItem::new(line)
+            let item = ListItem::new(line);
+            if matches!(entry.node_id, NodeId::DeadSession(_)) {
+                item.style(Style::default().add_modifier(Modifier::DIM))
+            } else {
+                item
+            }
         })
         .collect();
 
@@ -181,16 +190,63 @@ fn render_confirmation(frame: &mut Frame, app: &App) {
     frame.render_widget(popup, area);
 }
 
+fn render_rename_input(frame: &mut Frame, app: &App) {
+    let chars: Vec<char> = app.rename_buffer.chars().collect();
+    let before: String = chars[..app.rename_cursor].iter().collect();
+    let cursor_char = if app.rename_cursor < chars.len() {
+        chars[app.rename_cursor].to_string()
+    } else {
+        " ".to_string()
+    };
+    let after: String = if app.rename_cursor < chars.len() {
+        chars[app.rename_cursor + 1..].iter().collect()
+    } else {
+        String::new()
+    };
+
+    let input_line = Line::from(vec![
+        Span::raw(before),
+        Span::styled(
+            cursor_char,
+            Style::default()
+                .bg(Color::White)
+                .fg(Color::Black),
+        ),
+        Span::raw(after),
+    ]);
+    let hint_line = Line::from(
+        Span::styled(
+            "Enter confirm · Esc cancel",
+            Style::default().fg(Color::DarkGray),
+        )
+    );
+    let text = Text::from(vec![input_line, hint_line]);
+
+    let title = match app.renaming_target {
+        Some(RenameTarget::Window(_)) => "Rename window",
+        _ => "Rename session",
+    };
+
+    let area = centered_rect(50, 6, frame.area());
+    frame.render_widget(Clear, area);
+
+    let popup = Paragraph::new(text)
+        .block(Block::default().borders(Borders::ALL).title(title).padding(Padding::vertical(1)))
+        .alignment(Alignment::Left);
+
+    frame.render_widget(popup, area);
+}
+
 fn render_about(frame: &mut Frame) {
     let name = env!("CARGO_PKG_NAME");
     let version = env!("CARGO_PKG_VERSION");
     let commit = env!("GIT_COMMIT");
 
-    let text = ratatui::text::Text::from(vec![
-        ratatui::text::Line::from(name).alignment(Alignment::Center),
-        ratatui::text::Line::from(format!("v{} ({})", version, commit)).alignment(Alignment::Center),
-        ratatui::text::Line::from(""),
-        ratatui::text::Line::from(
+    let text = Text::from(vec![
+        Line::from(name).alignment(Alignment::Center),
+        Line::from(format!("v{} ({})", version, commit)).alignment(Alignment::Center),
+        Line::from(""),
+        Line::from(
             Span::styled("[esc] close", Style::default().add_modifier(Modifier::DIM))
         ).alignment(Alignment::Center),
     ]);

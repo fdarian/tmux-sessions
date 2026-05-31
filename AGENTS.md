@@ -13,6 +13,7 @@ src/
   config.rs  — optional config loading (~/.config/tmux-sessions/config.json), session name formatter
   tmux.rs    — all tmux command interaction (list/kill/switch/capture); capture_pane_raw, get_mode_style, parse_style functions
   tree.rs    — NodeId enum, FlatEntry struct, flatten/format_line for tree rendering
+  history.rs — recently-closed session history (~/.config/tmux-sessions/history.json): load/prune, upsert live sessions
   ui.rs      — render: vertical layout, List-based tree, preview, confirmation overlay
   event.rs   — map KeyEvent + Mode → Action enum
 ```
@@ -45,6 +46,13 @@ Optional config file at `~/.config/tmux-sessions/config.json`:
 - Formatter failure (missing script, non-zero exit, empty output) → per-session fallback to raw name
 - `Session.name` is always the raw tmux name (used for tmux commands); `Session.display_name` is what the UI shows
 
+## Reopening closed sessions
+
+- Every refresh snapshots live sessions (name + `#{session_path}` cwd + `last_seen`) into `~/.config/tmux-sessions/history.json` (`history::upsert_live_sessions`). A name in history but not in the live list is a "dead" session.
+- Dead sessions surface **only** in `/` filter results — `flatten_filtered` fuzzy-scores them and appends below live matches, dimmed (`Modifier::DIM`), as `NodeId::DeadSession(name)`. They never appear in the unfiltered tree, and are no-ops for pin/kill/preview.
+- `Enter` on a dead session resumes it: `tmux new-session -d -s <name> -c <cwd>` then `switch-client` (single window at the captured cwd — no layout restore).
+- History is pruned on load: entries older than 30 days (`HISTORY_MAX_AGE_SECS`) or whose `cwd` no longer exists are dropped.
+
 ## Dependencies
 
 - `ratatui` — TUI framework
@@ -73,7 +81,8 @@ cargo run
 | `p` | Toggle pin selected session |
 | `Shift+K` / `Shift+J` | Move pinned session up / down (no-op if not pinned) |
 | `x` | Kill selected (with confirmation) |
-| `r` | Refresh tree |
+| `r` | Rename selected (session/window) |
+| `R` | Refresh tree |
 | `q` | Quit |
 
 In fullscreen preview mode:
