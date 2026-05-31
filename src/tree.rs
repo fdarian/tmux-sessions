@@ -54,6 +54,7 @@ pub enum NodeId {
     Window(String, String),
     Pane(String, String, String),
     Separator,
+    DeadSession(String),
 }
 
 pub struct FlatEntry {
@@ -330,9 +331,16 @@ pub fn flatten(
     entries
 }
 
+pub struct DeadSessionRef<'a> {
+    pub name: &'a str,
+    pub display_name: &'a str,
+    pub last_seen: u64,
+}
+
 pub fn flatten_filtered(
     sessions: &[tmux::Session],
     windows: &[tmux::Window],
+    dead_sessions: &[DeadSessionRef<'_>],
     query: &str,
 ) -> Vec<FlatEntry> {
     let matcher = fuzzy_matcher::skim::SkimMatcherV2::default();
@@ -355,7 +363,27 @@ pub fn flatten_filtered(
     }
 
     scored.sort_by(|a, b| b.0.cmp(&a.0));
-    scored.into_iter().map(|(_, entry)| entry).collect()
+
+    let mut dead_scored: Vec<(i64, u64, FlatEntry)> = Vec::new();
+    for dead in dead_sessions.iter() {
+        let text = format!("{}: (dead)", dead.display_name);
+        if let Some(score) = matcher.fuzzy_match(&text, query) {
+            dead_scored.push((score, dead.last_seen, FlatEntry {
+                node_id: NodeId::DeadSession(dead.name.to_string()),
+                depth: 0,
+                has_children: false,
+                is_last_sibling: false,
+                ancestor_is_last: vec![],
+                text,
+                bound_session_id: None,
+            }));
+        }
+    }
+    dead_scored.sort_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)));
+
+    let mut result: Vec<FlatEntry> = scored.into_iter().map(|(_, entry)| entry).collect();
+    result.extend(dead_scored.into_iter().map(|(_, _, entry)| entry));
+    result
 }
 
 pub fn shortcut_label(index: usize) -> Option<String> {
