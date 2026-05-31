@@ -35,6 +35,8 @@ pub enum Action {
     FilterCursorEnd,
     SelectIndex(usize),
     ExitFilter,
+    OpenAbout,
+    CloseAbout,
     None,
 }
 
@@ -44,6 +46,7 @@ pub enum Mode {
     Confirming,
     Filtering,
     Previewing,
+    About,
 }
 
 pub fn map_key(key: KeyEvent, mode: &Mode) -> Action {
@@ -68,6 +71,7 @@ pub fn map_key(key: KeyEvent, mode: &Mode) -> Action {
             (KeyCode::Char('x'), _) => Action::Kill,
             (KeyCode::Char('r'), _) => Action::Refresh,
             (KeyCode::Char('/'), _) => Action::EnterFilter,
+            (KeyCode::Char('?'), _) => Action::OpenAbout,
             (KeyCode::Char(c @ '0'..='9'), _) => Action::SelectIndex((c as u8 - b'0') as usize),
             (KeyCode::Char(c @ 'a'..='z'), KeyModifiers::ALT) => {
                 Action::SelectIndex(10 + (c as u8 - b'a') as usize)
@@ -104,6 +108,9 @@ pub fn map_key(key: KeyEvent, mode: &Mode) -> Action {
             (KeyCode::Char('l'), _) | (KeyCode::Right, _) => Action::PreviewNext,
             (KeyCode::Enter, _) => Action::SelectPreviewPane,
             _ => Action::None,
+        },
+        Mode::About => match (key.code, key.modifiers) {
+            _ => Action::CloseAbout,
         },
     }
 }

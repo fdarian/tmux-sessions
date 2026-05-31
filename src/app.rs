@@ -624,6 +624,12 @@ impl App {
                 self.mode = Mode::Normal;
                 self.confirming_node = None;
             }
+            Action::OpenAbout => {
+                self.mode = Mode::About;
+            }
+            Action::CloseAbout => {
+                self.mode = Mode::Normal;
+            }
             Action::Refresh => {
                 let _ = self.refresh();
             }

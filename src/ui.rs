@@ -1,6 +1,6 @@
 use ansi_to_tui::IntoText;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
-use ratatui::style::{Color, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Span;
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Padding, Paragraph, Wrap};
 use ratatui::Frame;
@@ -25,6 +25,10 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     if app.mode == Mode::Confirming {
         render_confirmation(frame, app);
+    }
+
+    if app.mode == Mode::About {
+        render_about(frame);
     }
 }
 
@@ -173,6 +177,29 @@ fn render_confirmation(frame: &mut Frame, app: &App) {
         .block(Block::default().borders(Borders::ALL).title("Confirm").padding(Padding::vertical(1)))
         .alignment(Alignment::Center)
         .wrap(Wrap { trim: false });
+
+    frame.render_widget(popup, area);
+}
+
+fn render_about(frame: &mut Frame) {
+    let name = env!("CARGO_PKG_NAME");
+    let version = env!("CARGO_PKG_VERSION");
+    let commit = env!("GIT_COMMIT");
+
+    let text = ratatui::text::Text::from(vec![
+        ratatui::text::Line::from(name).alignment(Alignment::Center),
+        ratatui::text::Line::from(format!("v{} ({})", version, commit)).alignment(Alignment::Center),
+        ratatui::text::Line::from(""),
+        ratatui::text::Line::from(
+            Span::styled("[esc] close", Style::default().add_modifier(Modifier::DIM))
+        ).alignment(Alignment::Center),
+    ]);
+
+    let area = centered_rect(34, 7, frame.area());
+    frame.render_widget(Clear, area);
+
+    let popup = Paragraph::new(text)
+        .block(Block::default().borders(Borders::ALL).title("About").padding(Padding::vertical(1)));
 
     frame.render_widget(popup, area);
 }
