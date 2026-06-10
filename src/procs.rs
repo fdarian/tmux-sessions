@@ -5,11 +5,19 @@ use std::process::Command;
 #[derive(Clone)]
 pub struct PaneContext {
     pub session_name: String,
+    pub session_display: String,
     pub window_index: usize,
     pub window_name: String,
     #[allow(dead_code)]
     pub pane_index: usize,
     pub pane_id: String,
+    pub cwd: String,
+}
+
+#[derive(Clone)]
+pub struct ProcessAncestor {
+    pub pid: u32,
+    pub command: String,
 }
 
 #[derive(Clone)]
@@ -19,6 +27,7 @@ pub struct ProcessRow {
     pub rss_kb: u64,
     pub pcpu: f64,
     pub pane: PaneContext,
+    pub ancestors: Vec<ProcessAncestor>,
 }
 
 struct PsEntry {
@@ -34,6 +43,11 @@ struct MonitorPane {
     context: PaneContext,
 }
 
+struct PaneOwner {
+    context: PaneContext,
+    pane_pid: u32,
+}
+
 fn run_tmux_output(args: &[&str]) -> io::Result<String> {
     let output = Command::new("tmux").args(args).output()?;
     if !output.status.success() {
@@ -46,15 +60,15 @@ fn run_tmux_output(args: &[&str]) -> io::Result<String> {
 }
 
 fn list_monitor_panes() -> io::Result<Vec<MonitorPane>> {
-    let format = "#{session_name}\x1f#{window_index}\x1f#{window_name}\x1f#{pane_index}\x1f#{pane_id}\x1f#{pane_pid}";
+    let format = "#{session_name}\x1f#{window_index}\x1f#{window_name}\x1f#{pane_index}\x1f#{pane_id}\x1f#{pane_pid}\x1f#{pane_current_path}";
     let output = run_tmux_output(&["list-panes", "-a", "-F", format])?;
     let mut panes = Vec::new();
     for line in output.lines() {
         if line.is_empty() {
             continue;
         }
-        let parts: Vec<&str> = line.splitn(6, '\x1f').collect();
-        if parts.len() != 6 {
+        let parts: Vec<&str> = line.splitn(7, '\x1f').collect();
+        if parts.len() != 7 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("unexpected field count in pane line: {:?}", line),
@@ -78,14 +92,17 @@ fn list_monitor_panes() -> io::Result<Vec<MonitorPane>> {
                 format!("failed to parse pane_pid {:?}: {}", parts[5], e),
             )
         })?;
+        let session_name = parts[0].to_string();
         panes.push(MonitorPane {
             pane_pid,
             context: PaneContext {
-                session_name: parts[0].to_string(),
+                session_name: session_name.clone(),
+                session_display: session_name,
                 window_index,
                 window_name: parts[2].to_string(),
                 pane_index,
                 pane_id: parts[4].to_string(),
+                cwd: parts[6].to_string(),
             },
         });
     }
@@ -156,17 +173,56 @@ fn find_pane_owner(
     pid: u32,
     pane_pids: &HashMap<u32, PaneContext>,
     ppid_by_pid: &HashMap<u32, u32>,
-) -> Option<PaneContext> {
+) -> Option<PaneOwner> {
     let mut current = pid;
     loop {
         if let Some(ctx) = pane_pids.get(&current) {
-            return Some(ctx.clone());
+            return Some(PaneOwner {
+                context: ctx.clone(),
+                pane_pid: current,
+            });
         }
         match ppid_by_pid.get(&current) {
             Some(ppid) if *ppid != 0 && *ppid != current => current = *ppid,
             _ => return None,
         }
     }
+}
+
+fn build_ancestors(
+    pid: u32,
+    pane_pid: u32,
+    ppid_by_pid: &HashMap<u32, u32>,
+    command_by_pid: &HashMap<u32, String>,
+) -> io::Result<Vec<ProcessAncestor>> {
+    let mut ancestors = Vec::new();
+    let mut current = match ppid_by_pid.get(&pid) {
+        Some(ppid) => *ppid,
+        None => return Ok(ancestors),
+    };
+    loop {
+        let command = match command_by_pid.get(&current) {
+            Some(cmd) => cmd.clone(),
+            None => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("missing ps entry for ancestor pid {}", current),
+                ));
+            }
+        };
+        ancestors.push(ProcessAncestor {
+            pid: current,
+            command,
+        });
+        if current == pane_pid {
+            break;
+        }
+        current = match ppid_by_pid.get(&current) {
+            Some(ppid) if *ppid != 0 && *ppid != current => *ppid,
+            _ => break,
+        };
+    }
+    Ok(ancestors)
 }
 
 pub fn collect_process_rows() -> io::Result<Vec<ProcessRow>> {
@@ -179,22 +235,31 @@ pub fn collect_process_rows() -> io::Result<Vec<ProcessRow>> {
     }
 
     let mut ppid_by_pid: HashMap<u32, u32> = HashMap::new();
+    let mut command_by_pid: HashMap<u32, String> = HashMap::new();
     for entry in ps_entries.iter() {
         ppid_by_pid.insert(entry.pid, entry.ppid);
+        command_by_pid.insert(entry.pid, entry.command.clone());
     }
 
     let mut rows = Vec::new();
     for entry in ps_entries.iter() {
-        let pane = match find_pane_owner(entry.pid, &pane_pids, &ppid_by_pid) {
-            Some(ctx) => ctx,
+        let owner = match find_pane_owner(entry.pid, &pane_pids, &ppid_by_pid) {
+            Some(owner) => owner,
             None => continue,
         };
+        let ancestors = build_ancestors(
+            entry.pid,
+            owner.pane_pid,
+            &ppid_by_pid,
+            &command_by_pid,
+        )?;
         rows.push(ProcessRow {
             pid: entry.pid,
             command: entry.command.clone(),
             rss_kb: entry.rss_kb,
             pcpu: entry.pcpu,
-            pane,
+            pane: owner.context,
+            ancestors,
         });
     }
     Ok(rows)
@@ -227,9 +292,32 @@ pub fn format_pcpu(pcpu: f64) -> String {
     format!("{:.1}%", pcpu)
 }
 
+pub fn command_basename(command: &str) -> String {
+    if let Some(pos) = command.rfind('/') {
+        command[pos + 1..].to_string()
+    } else {
+        command.to_string()
+    }
+}
+
+pub fn truncate_chars(value: &str, max_chars: usize) -> String {
+    let chars: Vec<char> = value.chars().collect();
+    if chars.len() <= max_chars {
+        return value.to_string();
+    }
+    if max_chars == 0 {
+        return String::new();
+    }
+    if max_chars == 1 {
+        return "…".to_string();
+    }
+    let truncated: String = chars[..max_chars - 1].iter().collect();
+    format!("{}…", truncated)
+}
+
 pub fn format_pane_label(pane: &PaneContext) -> String {
     format!(
         "{} · {}:{}",
-        pane.session_name, pane.window_index, pane.window_name
+        pane.session_display, pane.window_index, pane.window_name
     )
 }

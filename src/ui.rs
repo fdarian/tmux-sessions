@@ -17,9 +17,13 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     }
 
     if app.mode == Mode::Monitor
+        || app.mode == Mode::ProcessDetail
         || (app.mode == Mode::Confirming && app.confirming_process.is_some())
     {
         render_monitor(frame, app, frame.area());
+        if app.mode == Mode::ProcessDetail {
+            render_process_detail(frame, app);
+        }
         if app.mode == Mode::Confirming {
             render_confirmation(frame, app);
         }
@@ -271,6 +275,30 @@ fn render_about(frame: &mut Frame) {
     frame.render_widget(popup, area);
 }
 
+const MONITOR_MEM_WIDTH: usize = 8;
+const MONITOR_CPU_WIDTH: usize = 7;
+const MONITOR_COL_GAP: usize = 2;
+const MONITOR_COMMAND_WIDTH: usize = 28;
+
+fn monitor_pane_width(inner_width: usize) -> usize {
+    let fixed = MONITOR_MEM_WIDTH
+        + MONITOR_COL_GAP
+        + MONITOR_CPU_WIDTH
+        + MONITOR_COL_GAP
+        + MONITOR_COMMAND_WIDTH
+        + MONITOR_COL_GAP;
+    inner_width.saturating_sub(fixed).max(1)
+}
+
+fn format_monitor_cell(value: &str, width: usize, align_right: bool) -> String {
+    let truncated = procs::truncate_chars(value, width);
+    if align_right {
+        format!("{:>width$}", truncated, width = width)
+    } else {
+        format!("{:<width$}", truncated, width = width)
+    }
+}
+
 fn render_monitor(frame: &mut Frame, app: &mut App, area: Rect) {
     let sort_label = match app.monitor_sort {
         MonitorSort::Mem => "MEM",
@@ -292,31 +320,53 @@ fn render_monitor(frame: &mut Frame, app: &mut App, area: Rect) {
         .constraints([Constraint::Length(1), Constraint::Min(0)])
         .split(inner);
 
+    let pane_width = monitor_pane_width(inner.width as usize);
+    let gap = " ".repeat(MONITOR_COL_GAP);
+
     let header = Line::from(vec![
         Span::styled(
-            format!("{:>8}", "MEM"),
+            format_monitor_cell("MEM", MONITOR_MEM_WIDTH, true),
             Style::default().fg(Color::DarkGray),
         ),
-        Span::raw("  "),
+        Span::raw(gap.clone()),
         Span::styled(
-            format!("{:>7}", "CPU"),
+            format_monitor_cell("CPU", MONITOR_CPU_WIDTH, true),
             Style::default().fg(Color::DarkGray),
         ),
-        Span::raw("  "),
-        Span::styled("COMMAND", Style::default().fg(Color::DarkGray)),
-        Span::raw("  "),
-        Span::styled("PANE", Style::default().fg(Color::DarkGray)),
+        Span::raw(gap.clone()),
+        Span::styled(
+            format_monitor_cell("COMMAND", MONITOR_COMMAND_WIDTH, false),
+            Style::default().fg(Color::DarkGray),
+        ),
+        Span::raw(gap),
+        Span::styled(
+            format_monitor_cell("PANE", pane_width, false),
+            Style::default().fg(Color::DarkGray),
+        ),
     ]);
     frame.render_widget(Paragraph::new(header), inner_chunks[0]);
 
     let items: Vec<ListItem> = app.monitor_rows.iter().map(|row| {
-        let mem = procs::format_rss_kb(row.rss_kb);
-        let cpu = procs::format_pcpu(row.pcpu);
-        let pane = procs::format_pane_label(&row.pane);
+        let mem = format_monitor_cell(&procs::format_rss_kb(row.rss_kb), MONITOR_MEM_WIDTH, true);
+        let cpu = format_monitor_cell(&procs::format_pcpu(row.pcpu), MONITOR_CPU_WIDTH, true);
+        let command = format_monitor_cell(
+            &procs::command_basename(&row.command),
+            MONITOR_COMMAND_WIDTH,
+            false,
+        );
+        let pane = format_monitor_cell(
+            &procs::format_pane_label(&row.pane),
+            pane_width,
+            false,
+        );
         let line = Line::from(vec![
-            Span::raw(format!("{:>8}  {:>7}  ", mem, cpu)),
-            Span::raw(format!("{:<24}", row.command)),
-            Span::raw(format!("  {}", pane)),
+            Span::raw(mem),
+            Span::raw("  "),
+            Span::raw(cpu),
+            Span::raw("  "),
+            Span::raw(command),
+            Span::raw("  "),
+            Span::raw(pane),
         ]);
         ListItem::new(line)
     }).collect();
@@ -327,10 +377,62 @@ fn render_monitor(frame: &mut Frame, app: &mut App, area: Rect) {
     frame.render_stateful_widget(list, inner_chunks[1], &mut app.monitor_list_state);
 
     let footer = Paragraph::new(
-        "[j/k] move  [s] sort  [enter] switch  [x] kill  [esc/q] back"
+        "[j/k] move  [s] sort  [space] details  [enter] switch  [x] kill  [esc/q] back"
     )
         .style(Style::default().fg(Color::DarkGray));
     frame.render_widget(footer, outer_chunks[1]);
+}
+
+fn render_process_detail(frame: &mut Frame, app: &App) {
+    let row = match app.monitor_rows.get(app.monitor_selected) {
+        Some(row) => row,
+        None => return,
+    };
+
+    let basename = procs::command_basename(&row.command);
+    let pane_label = procs::format_pane_label(&row.pane);
+    let mut lines = vec![
+        Line::from(format!("Command: {}", row.command)),
+        Line::from(format!("PID: {}", row.pid)),
+        Line::from(format!("Pane: {}", pane_label)),
+        Line::from(format!("CWD: {}", row.pane.cwd)),
+        Line::from(""),
+        Line::from("Parents:"),
+    ];
+    if row.ancestors.is_empty() {
+        lines.push(Line::from("  (none)"));
+    } else {
+        for ancestor in row.ancestors.iter() {
+            lines.push(Line::from(format!(
+                "  {} ({})",
+                ancestor.command, ancestor.pid
+            )));
+        }
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(
+        Span::styled(
+            "[space/esc] close",
+            Style::default().add_modifier(Modifier::DIM),
+        )
+    ));
+
+    let height = (lines.len() as u16 + 2).min(frame.area().height.saturating_sub(2));
+    let width = 60u16.min(frame.area().width.saturating_sub(4));
+    let area = centered_rect(width, height, frame.area());
+    frame.render_widget(Clear, area);
+
+    let popup = Paragraph::new(Text::from(lines))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(format!(" {} ", basename))
+                .padding(Padding::vertical(1)),
+        )
+        .alignment(Alignment::Left)
+        .wrap(Wrap { trim: false });
+
+    frame.render_widget(popup, area);
 }
 
 fn render_full_preview(frame: &mut Frame, app: &App, area: Rect) {

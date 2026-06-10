@@ -91,9 +91,13 @@ In process monitor mode:
 - `j` / `↓` — move down
 - `k` / `↑` — move up
 - `s` — toggle sort (MEM / CPU)
+- `Space` — process detail popup
 - `Enter` — switch to owning pane
 - `x` — kill selected process (with confirmation)
 - `Esc` / `q` — return to tree
+
+In process detail popup:
+- `Space` / `Esc` / `q` — close popup
 
 In fullscreen preview mode:
 - `h` / `←` — previous pane

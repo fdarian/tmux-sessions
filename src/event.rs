@@ -55,6 +55,8 @@ pub enum Action {
     EnterMonitor,
     ExitMonitor,
     ToggleMonitorSort,
+    OpenProcessDetail,
+    CloseProcessDetail,
     Tick,
     None,
 }
@@ -68,6 +70,7 @@ pub enum Mode {
     Renaming,
     About,
     Monitor,
+    ProcessDetail,
 }
 
 pub fn map_key(key: KeyEvent, mode: &Mode) -> Action {
@@ -157,8 +160,15 @@ pub fn map_key(key: KeyEvent, mode: &Mode) -> Action {
             (KeyCode::Char('k'), KeyModifiers::NONE) | (KeyCode::Up, KeyModifiers::NONE) => Action::MoveUp,
             (KeyCode::Char('j'), KeyModifiers::NONE) | (KeyCode::Down, KeyModifiers::NONE) => Action::MoveDown,
             (KeyCode::Char('s'), _) => Action::ToggleMonitorSort,
+            (KeyCode::Char(' '), _) => Action::OpenProcessDetail,
             (KeyCode::Enter, _) => Action::Select,
             (KeyCode::Char('x'), _) => Action::Kill,
+            _ => Action::None,
+        },
+        Mode::ProcessDetail => match (key.code, key.modifiers) {
+            (KeyCode::Char(' '), _) | (KeyCode::Esc, _) | (KeyCode::Char('q'), _) => {
+                Action::CloseProcessDetail
+            }
             _ => Action::None,
         },
     }

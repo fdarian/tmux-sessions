@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -280,11 +280,24 @@ impl App {
         });
     }
 
+    fn apply_session_display_names(&self, rows: &mut [ProcessRow]) {
+        let mut session_display_by_name: HashMap<String, String> = HashMap::new();
+        for session in self.sessions.iter() {
+            session_display_by_name.insert(session.name.clone(), session.display_name.clone());
+        }
+        for row in rows.iter_mut() {
+            if let Some(display) = session_display_by_name.get(&row.pane.session_name) {
+                row.pane.session_display = display.clone();
+            }
+        }
+    }
+
     pub fn refresh_monitor(&mut self) -> io::Result<()> {
         let prev_pid = self.monitor_rows
             .get(self.monitor_selected)
             .map(|row| row.pid);
         let mut rows = procs::collect_process_rows()?;
+        self.apply_session_display_names(&mut rows);
         Self::sort_monitor_rows(&mut rows, self.monitor_sort);
         self.monitor_rows = rows;
         self.reselect_monitor(prev_pid);
@@ -1136,8 +1149,20 @@ impl App {
                 Self::sort_monitor_rows(&mut self.monitor_rows, self.monitor_sort);
                 self.reselect_monitor(prev_pid);
             }
+            Action::OpenProcessDetail => {
+                if self.mode != Mode::Monitor {
+                    return;
+                }
+                if self.monitor_rows.get(self.monitor_selected).is_none() {
+                    return;
+                }
+                self.mode = Mode::ProcessDetail;
+            }
+            Action::CloseProcessDetail => {
+                self.mode = Mode::Monitor;
+            }
             Action::Tick => {
-                if self.mode == Mode::Monitor {
+                if self.mode == Mode::Monitor || self.mode == Mode::ProcessDetail {
                     let _ = self.refresh_monitor();
                 }
             }
@@ -1258,7 +1283,8 @@ impl App {
     }
 
     fn confirm_kill(&mut self) {
-        if let Some((pid, _)) = self.confirming_process {
+        if let Some(entry) = self.confirming_process.clone() {
+            let pid = entry.0;
             let result = procs::kill_process(pid);
             self.confirming_process = None;
             self.mode = Mode::Monitor;
@@ -1322,8 +1348,8 @@ impl App {
     }
 
     pub fn confirming_label(&self) -> Option<String> {
-        if let Some((pid, ref command)) = self.confirming_process {
-            return Some(format!("{} ({})", command, pid));
+        if let Some(entry) = self.confirming_process.as_ref() {
+            return Some(format!("{} ({})", entry.1, entry.0));
         }
         let node_id = self.confirming_node.as_ref()?;
         let label = match node_id {
