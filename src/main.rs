@@ -50,7 +50,7 @@ fn main() {
                     }
                 }
             }
-        } else if app.mode == Mode::Monitor || app.mode == Mode::ProcessDetail {
+        } else if app.mode == Mode::Monitor {
             app.handle_action(event::Action::Tick);
         }
 

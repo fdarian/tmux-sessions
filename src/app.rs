@@ -1162,7 +1162,7 @@ impl App {
                 self.mode = Mode::Monitor;
             }
             Action::Tick => {
-                if self.mode == Mode::Monitor || self.mode == Mode::ProcessDetail {
+                if self.mode == Mode::Monitor {
                     let _ = self.refresh_monitor();
                 }
             }

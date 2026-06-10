@@ -7,7 +7,7 @@ use ratatui::Frame;
 
 use crate::app::{App, MonitorSort, RenameTarget};
 use crate::event::Mode;
-use crate::procs;
+use crate::procs::{self, ProcessRow};
 use crate::tree::{self, NodeId};
 
 pub fn render(frame: &mut Frame, app: &mut App) {
@@ -21,9 +21,6 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         || (app.mode == Mode::Confirming && app.confirming_process.is_some())
     {
         render_monitor(frame, app, frame.area());
-        if app.mode == Mode::ProcessDetail {
-            render_process_detail(frame, app);
-        }
         if app.mode == Mode::Confirming {
             render_confirmation(frame, app);
         }
@@ -290,6 +287,31 @@ fn monitor_pane_width(inner_width: usize) -> usize {
     inner_width.saturating_sub(fixed).max(1)
 }
 
+fn monitor_detail_items(row: &ProcessRow) -> Vec<ListItem<'_>> {
+    let dim = Style::default().add_modifier(Modifier::DIM);
+    let mut lines: Vec<String> = Vec::new();
+    lines.push(format!("  ├ {}", row.command));
+    lines.push(format!("  ├ cwd: {}", row.pane.cwd));
+    lines.push(format!("  ├ pid: {}", row.pid));
+    if row.ancestors.is_empty() {
+        lines.push("  └ (none)".to_string());
+    } else {
+        let ancestor_count = row.ancestors.len();
+        for i in 0..ancestor_count {
+            let ancestor = &row.ancestors[i];
+            let connector = if i + 1 == ancestor_count { "  └ " } else { "  ├ " };
+            lines.push(format!(
+                "{}{} ({})",
+                connector, ancestor.command, ancestor.pid
+            ));
+        }
+    }
+    lines
+        .into_iter()
+        .map(|text| ListItem::new(Line::from(Span::styled(text, dim))))
+        .collect()
+}
+
 fn format_monitor_cell(value: &str, width: usize, align_right: bool) -> String {
     let truncated = procs::truncate_chars(value, width);
     if align_right {
@@ -346,7 +368,10 @@ fn render_monitor(frame: &mut Frame, app: &mut App, area: Rect) {
     ]);
     frame.render_widget(Paragraph::new(header), inner_chunks[0]);
 
-    let items: Vec<ListItem> = app.monitor_rows.iter().map(|row| {
+    let show_detail = app.mode == Mode::ProcessDetail;
+    let mut items: Vec<ListItem> = Vec::new();
+    for i in 0..app.monitor_rows.len() {
+        let row = &app.monitor_rows[i];
         let mem = format_monitor_cell(&procs::format_rss_kb(row.rss_kb), MONITOR_MEM_WIDTH, true);
         let cpu = format_monitor_cell(&procs::format_pcpu(row.pcpu), MONITOR_CPU_WIDTH, true);
         let command = format_monitor_cell(
@@ -368,8 +393,11 @@ fn render_monitor(frame: &mut Frame, app: &mut App, area: Rect) {
             Span::raw("  "),
             Span::raw(pane),
         ]);
-        ListItem::new(line)
-    }).collect();
+        items.push(ListItem::new(line));
+        if show_detail && i == app.monitor_selected {
+            items.extend(monitor_detail_items(row));
+        }
+    }
 
     let list = List::new(items)
         .highlight_style(app.highlight_style);
@@ -381,58 +409,6 @@ fn render_monitor(frame: &mut Frame, app: &mut App, area: Rect) {
     )
         .style(Style::default().fg(Color::DarkGray));
     frame.render_widget(footer, outer_chunks[1]);
-}
-
-fn render_process_detail(frame: &mut Frame, app: &App) {
-    let row = match app.monitor_rows.get(app.monitor_selected) {
-        Some(row) => row,
-        None => return,
-    };
-
-    let basename = procs::command_basename(&row.command);
-    let pane_label = procs::format_pane_label(&row.pane);
-    let mut lines = vec![
-        Line::from(format!("Command: {}", row.command)),
-        Line::from(format!("PID: {}", row.pid)),
-        Line::from(format!("Pane: {}", pane_label)),
-        Line::from(format!("CWD: {}", row.pane.cwd)),
-        Line::from(""),
-        Line::from("Parents:"),
-    ];
-    if row.ancestors.is_empty() {
-        lines.push(Line::from("  (none)"));
-    } else {
-        for ancestor in row.ancestors.iter() {
-            lines.push(Line::from(format!(
-                "  {} ({})",
-                ancestor.command, ancestor.pid
-            )));
-        }
-    }
-    lines.push(Line::from(""));
-    lines.push(Line::from(
-        Span::styled(
-            "[space/esc] close",
-            Style::default().add_modifier(Modifier::DIM),
-        )
-    ));
-
-    let height = (lines.len() as u16 + 2).min(frame.area().height.saturating_sub(2));
-    let width = 60u16.min(frame.area().width.saturating_sub(4));
-    let area = centered_rect(width, height, frame.area());
-    frame.render_widget(Clear, area);
-
-    let popup = Paragraph::new(Text::from(lines))
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(format!(" {} ", basename))
-                .padding(Padding::vertical(1)),
-        )
-        .alignment(Alignment::Left)
-        .wrap(Wrap { trim: false });
-
-    frame.render_widget(popup, area);
 }
 
 fn render_full_preview(frame: &mut Frame, app: &App, area: Rect) {
