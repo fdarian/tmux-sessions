@@ -16,6 +16,7 @@ src/
   history.rs — recently-closed session history (~/.config/tmux-sessions/history.json): load/prune, upsert live sessions
   ui.rs      — render: vertical layout, List-based tree, preview, confirmation overlay
   event.rs   — map KeyEvent + Mode → Action enum
+  procs.rs   — process monitor: pane enumeration, ps parsing, subtree ownership
 ```
 
 ## Key Conventions
@@ -83,7 +84,16 @@ cargo run
 | `x` | Kill selected (with confirmation) |
 | `r` | Rename selected (session/window) |
 | `R` | Refresh tree |
+| `m` | Open process monitor |
 | `q` | Quit |
+
+In process monitor mode:
+- `j` / `↓` — move down
+- `k` / `↑` — move up
+- `s` — toggle sort (MEM / CPU)
+- `Enter` — switch to owning pane
+- `x` — kill selected process (with confirmation)
+- `Esc` / `q` — return to tree
 
 In fullscreen preview mode:
 - `h` / `←` — previous pane

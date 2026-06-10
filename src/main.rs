@@ -2,6 +2,7 @@ mod app;
 mod config;
 mod event;
 mod history;
+mod procs;
 mod tmux;
 mod tree;
 mod ui;
@@ -11,6 +12,10 @@ use std::env;
 use std::time::Duration;
 
 use crossterm::event::{poll, read, Event};
+
+use crate::event::Mode;
+
+const TICK_RATE: Duration = Duration::from_secs(2);
 
 fn main() {
     if env::var("TMUX").is_err() {
@@ -33,16 +38,20 @@ fn main() {
             .draw(|frame| ui::render(frame, &mut app))
             .expect("failed to draw");
 
-        if let Ok(Event::Key(key)) = read() {
-            let action = event::map_key(key, &app.mode);
-            app.handle_action(action);
-            // Drain any immediately-available events (e.g. modifier key + char from same keystroke).
-            while poll(Duration::ZERO).unwrap_or(false) {
-                if let Ok(Event::Key(key)) = read() {
-                    let action = event::map_key(key, &app.mode);
-                    app.handle_action(action);
+        if poll(TICK_RATE).unwrap_or(false) {
+            if let Ok(Event::Key(key)) = read() {
+                let action = event::map_key(key, &app.mode);
+                app.handle_action(action);
+                // Drain any immediately-available events (e.g. modifier key + char from same keystroke).
+                while poll(Duration::ZERO).unwrap_or(false) {
+                    if let Ok(Event::Key(key)) = read() {
+                        let action = event::map_key(key, &app.mode);
+                        app.handle_action(action);
+                    }
                 }
             }
+        } else if app.mode == Mode::Monitor {
+            app.handle_action(event::Action::Tick);
         }
 
         if app.should_quit {

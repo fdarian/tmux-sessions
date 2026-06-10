@@ -5,13 +5,24 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Padding, Paragraph, Wrap};
 use ratatui::Frame;
 
-use crate::app::{App, RenameTarget};
+use crate::app::{App, MonitorSort, RenameTarget};
 use crate::event::Mode;
+use crate::procs;
 use crate::tree::{self, NodeId};
 
 pub fn render(frame: &mut Frame, app: &mut App) {
     if app.mode == Mode::Previewing {
         render_full_preview(frame, app, frame.area());
+        return;
+    }
+
+    if app.mode == Mode::Monitor
+        || (app.mode == Mode::Confirming && app.confirming_process.is_some())
+    {
+        render_monitor(frame, app, frame.area());
+        if app.mode == Mode::Confirming {
+            render_confirmation(frame, app);
+        }
         return;
     }
 
@@ -258,6 +269,68 @@ fn render_about(frame: &mut Frame) {
         .block(Block::default().borders(Borders::ALL).title("About").padding(Padding::vertical(1)));
 
     frame.render_widget(popup, area);
+}
+
+fn render_monitor(frame: &mut Frame, app: &mut App, area: Rect) {
+    let sort_label = match app.monitor_sort {
+        MonitorSort::Mem => "MEM",
+        MonitorSort::Cpu => "CPU",
+    };
+    let title = format!(" Process Monitor (sort: {}) ", sort_label);
+
+    let outer_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(0), Constraint::Length(1)])
+        .split(area);
+
+    let block = Block::default().borders(Borders::ALL).title(title);
+    let inner = block.inner(outer_chunks[0]);
+    frame.render_widget(block, outer_chunks[0]);
+
+    let inner_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Min(0)])
+        .split(inner);
+
+    let header = Line::from(vec![
+        Span::styled(
+            format!("{:>8}", "MEM"),
+            Style::default().fg(Color::DarkGray),
+        ),
+        Span::raw("  "),
+        Span::styled(
+            format!("{:>7}", "CPU"),
+            Style::default().fg(Color::DarkGray),
+        ),
+        Span::raw("  "),
+        Span::styled("COMMAND", Style::default().fg(Color::DarkGray)),
+        Span::raw("  "),
+        Span::styled("PANE", Style::default().fg(Color::DarkGray)),
+    ]);
+    frame.render_widget(Paragraph::new(header), inner_chunks[0]);
+
+    let items: Vec<ListItem> = app.monitor_rows.iter().map(|row| {
+        let mem = procs::format_rss_kb(row.rss_kb);
+        let cpu = procs::format_pcpu(row.pcpu);
+        let pane = procs::format_pane_label(&row.pane);
+        let line = Line::from(vec![
+            Span::raw(format!("{:>8}  {:>7}  ", mem, cpu)),
+            Span::raw(format!("{:<24}", row.command)),
+            Span::raw(format!("  {}", pane)),
+        ]);
+        ListItem::new(line)
+    }).collect();
+
+    let list = List::new(items)
+        .highlight_style(app.highlight_style);
+
+    frame.render_stateful_widget(list, inner_chunks[1], &mut app.monitor_list_state);
+
+    let footer = Paragraph::new(
+        "[j/k] move  [s] sort  [enter] switch  [x] kill  [esc/q] back"
+    )
+        .style(Style::default().fg(Color::DarkGray));
+    frame.render_widget(footer, outer_chunks[1]);
 }
 
 fn render_full_preview(frame: &mut Frame, app: &App, area: Rect) {

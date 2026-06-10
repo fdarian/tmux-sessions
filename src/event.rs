@@ -52,6 +52,10 @@ pub enum Action {
     CancelRename,
     OpenAbout,
     CloseAbout,
+    EnterMonitor,
+    ExitMonitor,
+    ToggleMonitorSort,
+    Tick,
     None,
 }
 
@@ -63,6 +67,7 @@ pub enum Mode {
     Previewing,
     Renaming,
     About,
+    Monitor,
 }
 
 pub fn map_key(key: KeyEvent, mode: &Mode) -> Action {
@@ -88,6 +93,7 @@ pub fn map_key(key: KeyEvent, mode: &Mode) -> Action {
             (KeyCode::Char('R'), KeyModifiers::NONE | KeyModifiers::SHIFT) | (KeyCode::Char('r'), KeyModifiers::SHIFT) => Action::Refresh,
             (KeyCode::Char('r'), _) => Action::StartRename,
             (KeyCode::Char('/'), _) => Action::EnterFilter,
+            (KeyCode::Char('m'), _) => Action::EnterMonitor,
             (KeyCode::Char('?'), _) => Action::OpenAbout,
             (KeyCode::Char(c @ '0'..='9'), _) => Action::SelectIndex((c as u8 - b'0') as usize),
             (KeyCode::Char(c @ 'a'..='z'), KeyModifiers::ALT) => {
@@ -145,6 +151,15 @@ pub fn map_key(key: KeyEvent, mode: &Mode) -> Action {
         },
         Mode::About => match (key.code, key.modifiers) {
             _ => Action::CloseAbout,
+        },
+        Mode::Monitor => match (key.code, key.modifiers) {
+            (KeyCode::Esc, _) | (KeyCode::Char('q'), _) => Action::ExitMonitor,
+            (KeyCode::Char('k'), KeyModifiers::NONE) | (KeyCode::Up, KeyModifiers::NONE) => Action::MoveUp,
+            (KeyCode::Char('j'), KeyModifiers::NONE) | (KeyCode::Down, KeyModifiers::NONE) => Action::MoveDown,
+            (KeyCode::Char('s'), _) => Action::ToggleMonitorSort,
+            (KeyCode::Enter, _) => Action::Select,
+            (KeyCode::Char('x'), _) => Action::Kill,
+            _ => Action::None,
         },
     }
 }
