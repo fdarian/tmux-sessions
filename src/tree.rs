@@ -294,15 +294,17 @@ pub fn flatten(
     panes: &[tmux::Pane],
     opened: &HashSet<NodeId>,
     pinned: &[String],
+    hidden: &[String],
     group_separator: Option<&str>,
 ) -> Vec<FlatEntry> {
     let mut entries = Vec::new();
 
     let pinned_sessions: Vec<&tmux::Session> = pinned.iter()
         .filter_map(|name| sessions.iter().find(|s| s.name == *name))
+        .filter(|s| !hidden.contains(&s.name))
         .collect();
     let unpinned_sessions: Vec<&tmux::Session> =
-        sessions.iter().filter(|s| !pinned.contains(&s.name)).collect();
+        sessions.iter().filter(|s| !pinned.contains(&s.name) && !hidden.contains(&s.name)).collect();
 
     // Pinned always render flat at the top, regardless of grouping.
     flatten_session_list(&pinned_sessions, windows, panes, opened, &mut entries);

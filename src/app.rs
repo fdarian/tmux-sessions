@@ -51,6 +51,46 @@ fn save_pins(pinned: &[String]) {
     }
 }
 
+fn hidden_path() -> io::Result<String> {
+    let home = std::env::var("HOME")
+        .map_err(|_| io::Error::new(io::ErrorKind::NotFound, "$HOME not set"))?;
+    Ok(format!("{}/.config/tmux-sessions/hidden.json", home))
+}
+
+fn load_hidden() -> Vec<String> {
+    let path = match hidden_path() {
+        Ok(p) => p,
+        Err(_) => return Vec::new(),
+    };
+    let content = match std::fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(_) => return Vec::new(),
+    };
+    match serde_json::from_str::<Vec<String>>(&content) {
+        Ok(v) => v,
+        Err(e) => {
+            let ts = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            let backup = format!("{}.broken.{}", path, ts);
+            let _ = std::fs::rename(&path, &backup);
+            eprintln!("tmux-sessions: hidden.json was corrupt ({e}); moved to {backup}");
+            Vec::new()
+        }
+    }
+}
+
+fn save_hidden(hidden: &[String]) {
+    let path = match hidden_path() {
+        Ok(p) => p,
+        Err(_) => return,
+    };
+    if let Ok(json) = serde_json::to_string(hidden) {
+        let _ = std::fs::write(&path, json);
+    }
+}
+
 pub struct PreviewPane {
     pub label: String,
     pub content: Vec<u8>,
@@ -102,6 +142,7 @@ pub struct App {
     pub filter_query: String,
     pub filter_cursor: usize,
     pub pinned: Vec<String>,
+    pub hidden: Vec<String>,
     pub renaming_target: Option<RenameTarget>,
     pub rename_buffer: String,
     pub rename_cursor: usize,
@@ -172,13 +213,14 @@ impl App {
         let dead_sessions = compute_dead_sessions(&history_entries, &sessions, &config);
 
         let pinned = load_pins();
+        let hidden = load_hidden();
         let group_sep = config.as_ref().and_then(|c| c.group_name_separator.as_deref());
         let group_prefixes = extract_group_prefixes(&sessions, group_sep);
         let opened: HashSet<NodeId> = group_prefixes.iter()
             .map(|p| NodeId::Group(p.clone()))
             .collect();
         let seen_groups: HashSet<String> = group_prefixes.into_iter().collect();
-        let flat_entries = tree::flatten(&sessions, &windows, &panes, &opened, &pinned, group_sep);
+        let flat_entries = tree::flatten(&sessions, &windows, &panes, &opened, &pinned, &hidden, group_sep);
         let mut list_state = ListState::default();
         let initial_index = flat_entries
             .iter()
@@ -230,6 +272,7 @@ impl App {
             filter_query: String::new(),
             filter_cursor: 0,
             pinned,
+            hidden,
             renaming_target: None,
             rename_buffer: String::new(),
             rename_cursor: 0,
@@ -283,7 +326,7 @@ impl App {
     fn rebuild_flat_entries(&mut self) {
         if self.filter_query.is_empty() {
             let sep = self.config.as_ref().and_then(|c| c.group_name_separator.as_deref());
-            self.flat_entries = tree::flatten(&self.sessions, &self.windows, &self.panes, &self.opened, &self.pinned, sep);
+            self.flat_entries = tree::flatten(&self.sessions, &self.windows, &self.panes, &self.opened, &self.pinned, &self.hidden, sep);
         } else {
             let dead_refs: Vec<DeadSessionRef<'_>> = self.dead_sessions.iter().map(|d| DeadSessionRef {
                 name: &d.name,
@@ -600,6 +643,43 @@ impl App {
                 self.rebuild_flat_entries();
                 if let Some(new_i) = self.flat_entries.iter().position(|e| e.node_id == current_node_id) {
                     self.list_state.select(Some(new_i));
+                }
+                self.update_preview();
+            }
+            Action::ToggleHide => {
+                let i = match self.list_state.selected() {
+                    Some(i) if i < self.flat_entries.len() => i,
+                    _ => return,
+                };
+                let session_id = match &self.flat_entries[i].node_id {
+                    NodeId::Session(id) => id.clone(),
+                    NodeId::Window(session_id, _) => session_id.clone(),
+                    NodeId::Pane(session_id, _, _) => session_id.clone(),
+                    NodeId::Separator | NodeId::DeadSession(_) => return,
+                    NodeId::Group(_) => match self.flat_entries[i].bound_session_id.clone() {
+                        Some(id) => id,
+                        None => return,
+                    },
+                };
+                let session_name = match self.sessions.iter().find(|s| s.id == session_id) {
+                    Some(s) => s.name.clone(),
+                    None => return,
+                };
+                if self.hidden.contains(&session_name) {
+                    self.hidden.retain(|h| *h != session_name);
+                } else {
+                    self.hidden.push(session_name);
+                }
+                save_hidden(&self.hidden);
+                let current_node_id = self.flat_entries[i].node_id.clone();
+                self.rebuild_flat_entries();
+                if let Some(new_i) = self.flat_entries.iter().position(|e| e.node_id == current_node_id) {
+                    self.list_state.select(Some(new_i));
+                } else if self.flat_entries.is_empty() {
+                    self.list_state.select(None);
+                } else {
+                    let clamped = i.min(self.flat_entries.len() - 1);
+                    self.list_state.select(Some(clamped));
                 }
                 self.update_preview();
             }

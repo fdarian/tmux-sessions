@@ -18,6 +18,7 @@ pub enum Action {
     CancelKill,
     Refresh,
     TogglePin,
+    ToggleHide,
     MovePinUp,
     MovePinDown,
     EnterFilter,
@@ -82,6 +83,7 @@ pub fn map_key(key: KeyEvent, mode: &Mode) -> Action {
             (KeyCode::Char(' '), _) => Action::EnterFullPreview,
             (KeyCode::Enter, _) => Action::Select,
             (KeyCode::Char('p'), KeyModifiers::NONE) => Action::TogglePin,
+            (KeyCode::Char('H'), KeyModifiers::NONE | KeyModifiers::SHIFT) => Action::ToggleHide,
             (KeyCode::Char('K'), KeyModifiers::NONE | KeyModifiers::SHIFT) | (KeyCode::Char('k'), KeyModifiers::SHIFT) | (KeyCode::Up, KeyModifiers::SHIFT) => Action::MovePinUp,
             (KeyCode::Char('J'), KeyModifiers::NONE | KeyModifiers::SHIFT) | (KeyCode::Char('j'), KeyModifiers::SHIFT) | (KeyCode::Down, KeyModifiers::SHIFT) => Action::MovePinDown,
             (KeyCode::Char('x'), _) => Action::Kill,
@@ -103,6 +105,7 @@ pub fn map_key(key: KeyEvent, mode: &Mode) -> Action {
         Mode::Filtering => match (key.code, key.modifiers) {
             (KeyCode::Esc, _) => Action::ExitFilter,
             (KeyCode::Enter, _) => Action::Select,
+            (KeyCode::Char('H'), KeyModifiers::NONE | KeyModifiers::SHIFT) => Action::ToggleHide,
             (KeyCode::Up, _) | (KeyCode::Char('p'), KeyModifiers::CONTROL) => Action::MoveUp,
             (KeyCode::Down, _) | (KeyCode::Char('n'), KeyModifiers::CONTROL) => Action::MoveDown,
             (KeyCode::Char('a'), KeyModifiers::CONTROL) => Action::FilterCursorStart,

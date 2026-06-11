@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use ansi_to_tui::IntoText;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -39,6 +41,11 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 fn render_tree(frame: &mut Frame, app: &mut App, area: Rect) {
     let key_width = if app.flat_entries.len() > 10 { 5 } else { 3 };
 
+    let hidden_session_ids: HashSet<String> = app.sessions.iter()
+        .filter(|s| app.hidden.contains(&s.name))
+        .map(|s| s.id.clone())
+        .collect();
+
     let items: Vec<ListItem> = app
         .flat_entries
         .iter()
@@ -47,7 +54,13 @@ fn render_tree(frame: &mut Frame, app: &mut App, area: Rect) {
             let is_expanded = app.opened.contains(&entry.node_id);
             let line = tree::format_line(entry, i, is_expanded, key_width);
             let item = ListItem::new(line);
-            if matches!(entry.node_id, NodeId::DeadSession(_)) {
+            let is_hidden = match &entry.node_id {
+                NodeId::Session(id) | NodeId::Window(id, _) | NodeId::Pane(id, _, _) => {
+                    hidden_session_ids.contains(id)
+                }
+                _ => false,
+            };
+            if matches!(entry.node_id, NodeId::DeadSession(_)) || is_hidden {
                 item.style(Style::default().add_modifier(Modifier::DIM))
             } else {
                 item
