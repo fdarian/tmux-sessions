@@ -58,27 +58,27 @@ fn render_tree(frame: &mut Frame, app: &mut App, area: Rect) {
         .map(|s| s.id.clone())
         .collect();
 
-    let items: Vec<ListItem> = app
-        .flat_entries
-        .iter()
-        .enumerate()
-        .map(|(i, entry)| {
-            let is_expanded = app.opened.contains(&entry.node_id);
-            let line = tree::format_line(entry, i, is_expanded, key_width);
-            let item = ListItem::new(line);
-            let is_hidden = match &entry.node_id {
-                NodeId::Session(id) | NodeId::Window(id, _) | NodeId::Pane(id, _, _) => {
-                    hidden_session_ids.contains(id)
-                }
-                _ => false,
-            };
-            if matches!(entry.node_id, NodeId::DeadSession(_)) || is_hidden {
-                item.style(Style::default().add_modifier(Modifier::DIM))
-            } else {
-                item
+    let mut shortcut_index = 0usize;
+    let mut items = Vec::with_capacity(app.flat_entries.len());
+    for entry in &app.flat_entries {
+        let is_expanded = app.opened.contains(&entry.node_id);
+        let line = tree::format_line(entry, shortcut_index, is_expanded, key_width);
+        if entry.node_id != NodeId::Separator {
+            shortcut_index += 1;
+        }
+        let item = ListItem::new(line);
+        let is_hidden = match &entry.node_id {
+            NodeId::Session(id) | NodeId::Window(id, _) | NodeId::Pane(id, _, _) => {
+                hidden_session_ids.contains(id)
             }
-        })
-        .collect();
+            _ => false,
+        };
+        if matches!(entry.node_id, NodeId::DeadSession(_)) || is_hidden {
+            items.push(item.style(Style::default().add_modifier(Modifier::DIM)));
+        } else {
+            items.push(item);
+        }
+    }
 
     let list = List::new(items)
         .highlight_style(app.highlight_style);
