@@ -143,6 +143,7 @@ pub struct App {
     pub filter_cursor: usize,
     pub pinned: Vec<String>,
     pub hidden: Vec<String>,
+    pub show_hidden: bool,
     pub renaming_target: Option<RenameTarget>,
     pub rename_buffer: String,
     pub rename_cursor: usize,
@@ -214,13 +215,14 @@ impl App {
 
         let pinned = load_pins();
         let hidden = load_hidden();
+        let show_hidden = false;
         let group_sep = config.as_ref().and_then(|c| c.group_name_separator.as_deref());
         let group_prefixes = extract_group_prefixes(&sessions, group_sep);
         let opened: HashSet<NodeId> = group_prefixes.iter()
             .map(|p| NodeId::Group(p.clone()))
             .collect();
         let seen_groups: HashSet<String> = group_prefixes.into_iter().collect();
-        let flat_entries = tree::flatten(&sessions, &windows, &panes, &opened, &pinned, &hidden, group_sep);
+        let flat_entries = tree::flatten(&sessions, &windows, &panes, &opened, &pinned, &hidden, show_hidden, group_sep);
         let mut list_state = ListState::default();
         let initial_index = flat_entries
             .iter()
@@ -273,6 +275,7 @@ impl App {
             filter_cursor: 0,
             pinned,
             hidden,
+            show_hidden,
             renaming_target: None,
             rename_buffer: String::new(),
             rename_cursor: 0,
@@ -326,7 +329,7 @@ impl App {
     fn rebuild_flat_entries(&mut self) {
         if self.filter_query.is_empty() {
             let sep = self.config.as_ref().and_then(|c| c.group_name_separator.as_deref());
-            self.flat_entries = tree::flatten(&self.sessions, &self.windows, &self.panes, &self.opened, &self.pinned, &self.hidden, sep);
+            self.flat_entries = tree::flatten(&self.sessions, &self.windows, &self.panes, &self.opened, &self.pinned, &self.hidden, self.show_hidden, sep);
         } else {
             let dead_refs: Vec<DeadSessionRef<'_>> = self.dead_sessions.iter().map(|d| DeadSessionRef {
                 name: &d.name,
@@ -680,6 +683,27 @@ impl App {
                 } else {
                     let clamped = i.min(self.flat_entries.len() - 1);
                     self.list_state.select(Some(clamped));
+                }
+                self.update_preview();
+            }
+            Action::ToggleShowHidden => {
+                let (current_node_id, i) = match self.list_state.selected() {
+                    Some(i) if i < self.flat_entries.len() => {
+                        (Some(self.flat_entries[i].node_id.clone()), i)
+                    }
+                    _ => (None, 0),
+                };
+                self.show_hidden = !self.show_hidden;
+                self.rebuild_flat_entries();
+                if let Some(node_id) = current_node_id {
+                    if let Some(new_i) = self.flat_entries.iter().position(|e| e.node_id == node_id) {
+                        self.list_state.select(Some(new_i));
+                    } else if self.flat_entries.is_empty() {
+                        self.list_state.select(None);
+                    } else {
+                        let clamped = i.min(self.flat_entries.len() - 1);
+                        self.list_state.select(Some(clamped));
+                    }
                 }
                 self.update_preview();
             }

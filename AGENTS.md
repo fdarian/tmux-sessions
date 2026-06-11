@@ -80,6 +80,7 @@ cargo run
 | `Enter` | Switch to selected |
 | `p` | Toggle pin selected session |
 | `Shift+H` | Hide / unhide selected session |
+| `.` | Reveal / collapse hidden sessions |
 | `Shift+K` / `Shift+J` | Move pinned session up / down (no-op if not pinned) |
 | `x` | Kill selected (with confirmation) |
 | `r` | Rename selected (session/window) |
