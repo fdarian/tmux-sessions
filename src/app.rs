@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -8,8 +8,15 @@ use ratatui::widgets::ListState;
 use crate::config;
 use crate::event::{Action, Mode};
 use crate::history::{self, HistoryEntry};
+use crate::procs::{self, ProcessRow};
 use crate::tmux;
 use crate::tree::{self, DeadSessionRef, FlatEntry, NodeId};
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum MonitorSort {
+    Mem,
+    Cpu,
+}
 
 fn pins_path() -> io::Result<String> {
     let home = std::env::var("HOME")
@@ -106,6 +113,11 @@ pub struct App {
     pub rename_buffer: String,
     pub rename_cursor: usize,
     pub dead_sessions: Vec<DeadSession>,
+    pub monitor_rows: Vec<ProcessRow>,
+    pub monitor_selected: usize,
+    pub monitor_sort: MonitorSort,
+    pub monitor_list_state: ListState,
+    pub confirming_process: Option<(u32, String)>,
 }
 
 fn current_unix_secs() -> io::Result<u64> {
@@ -234,9 +246,62 @@ impl App {
             rename_buffer: String::new(),
             rename_cursor: 0,
             dead_sessions,
+            monitor_rows: Vec::new(),
+            monitor_selected: 0,
+            monitor_sort: MonitorSort::Mem,
+            monitor_list_state: ListState::default(),
+            confirming_process: None,
         };
         app.update_preview();
         Ok(app)
+    }
+
+    fn sort_monitor_rows(rows: &mut [ProcessRow], sort: MonitorSort) {
+        match sort {
+            MonitorSort::Mem => rows.sort_by(|a, b| b.rss_kb.cmp(&a.rss_kb)),
+            MonitorSort::Cpu => rows.sort_by(|a, b| {
+                b.pcpu.partial_cmp(&a.pcpu)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            }),
+        }
+    }
+
+    fn reselect_monitor(&mut self, prev_pid: Option<u32>) {
+        let new_index = prev_pid
+            .and_then(|pid| self.monitor_rows.iter().position(|row| row.pid == pid))
+            .unwrap_or_else(|| {
+                self.monitor_selected.min(self.monitor_rows.len().saturating_sub(1))
+            });
+        self.monitor_selected = new_index;
+        self.monitor_list_state.select(if self.monitor_rows.is_empty() {
+            None
+        } else {
+            Some(new_index)
+        });
+    }
+
+    fn apply_session_display_names(&self, rows: &mut [ProcessRow]) {
+        let mut session_display_by_name: HashMap<String, String> = HashMap::new();
+        for session in self.sessions.iter() {
+            session_display_by_name.insert(session.name.clone(), session.display_name.clone());
+        }
+        for row in rows.iter_mut() {
+            if let Some(display) = session_display_by_name.get(&row.pane.session_name) {
+                row.pane.session_display = display.clone();
+            }
+        }
+    }
+
+    pub fn refresh_monitor(&mut self) -> io::Result<()> {
+        let prev_pid = self.monitor_rows
+            .get(self.monitor_selected)
+            .map(|row| row.pid);
+        let mut rows = procs::collect_process_rows()?;
+        self.apply_session_display_names(&mut rows);
+        Self::sort_monitor_rows(&mut rows, self.monitor_sort);
+        self.monitor_rows = rows;
+        self.reselect_monitor(prev_pid);
+        Ok(())
     }
 
     pub fn refresh(&mut self) -> io::Result<()> {
@@ -546,6 +611,13 @@ impl App {
         match action {
             Action::Quit => self.should_quit = true,
             Action::MoveUp => {
+                if self.mode == Mode::Monitor {
+                    if self.monitor_selected > 0 {
+                        self.monitor_selected -= 1;
+                        self.monitor_list_state.select(Some(self.monitor_selected));
+                    }
+                    return;
+                }
                 if let Some(i) = self.list_state.selected() {
                     let mut target = i;
                     while target > 0 {
@@ -559,6 +631,13 @@ impl App {
                 }
             }
             Action::MoveDown => {
+                if self.mode == Mode::Monitor {
+                    if self.monitor_selected + 1 < self.monitor_rows.len() {
+                        self.monitor_selected += 1;
+                        self.monitor_list_state.select(Some(self.monitor_selected));
+                    }
+                    return;
+                }
                 if let Some(i) = self.list_state.selected() {
                     let mut target = i;
                     while target + 1 < self.flat_entries.len() {
@@ -684,12 +763,23 @@ impl App {
                     }
                 }
             }
-            Action::Select => self.select_current(),
+            Action::Select => {
+                if self.mode == Mode::Monitor {
+                    self.select_monitor_process();
+                } else {
+                    self.select_current();
+                }
+            }
             Action::Kill => self.start_kill(),
             Action::ConfirmKill => self.confirm_kill(),
             Action::CancelKill => {
-                self.mode = Mode::Normal;
-                self.confirming_node = None;
+                if self.confirming_process.is_some() {
+                    self.confirming_process = None;
+                    self.mode = Mode::Monitor;
+                } else {
+                    self.mode = Mode::Normal;
+                    self.confirming_node = None;
+                }
             }
             Action::OpenAbout => {
                 self.mode = Mode::About;
@@ -1038,7 +1128,57 @@ impl App {
                 self.rename_buffer = String::new();
                 self.rename_cursor = 0;
             }
+            Action::EnterMonitor => {
+                self.mode = Mode::Monitor;
+                let _ = self.refresh_monitor();
+            }
+            Action::ExitMonitor => {
+                self.mode = Mode::Normal;
+            }
+            Action::ToggleMonitorSort => {
+                if self.mode != Mode::Monitor {
+                    return;
+                }
+                self.monitor_sort = match self.monitor_sort {
+                    MonitorSort::Mem => MonitorSort::Cpu,
+                    MonitorSort::Cpu => MonitorSort::Mem,
+                };
+                let prev_pid = self.monitor_rows
+                    .get(self.monitor_selected)
+                    .map(|row| row.pid);
+                Self::sort_monitor_rows(&mut self.monitor_rows, self.monitor_sort);
+                self.reselect_monitor(prev_pid);
+            }
+            Action::OpenProcessDetail => {
+                if self.mode != Mode::Monitor {
+                    return;
+                }
+                if self.monitor_rows.get(self.monitor_selected).is_none() {
+                    return;
+                }
+                self.mode = Mode::ProcessDetail;
+            }
+            Action::CloseProcessDetail => {
+                self.mode = Mode::Monitor;
+            }
+            Action::Tick => {
+                if self.mode == Mode::Monitor {
+                    let _ = self.refresh_monitor();
+                }
+            }
             Action::None => {}
+        }
+    }
+
+    fn select_monitor_process(&mut self) {
+        let row = match self.monitor_rows.get(self.monitor_selected) {
+            Some(row) => row,
+            None => return,
+        };
+        let result = tmux::switch_client(&row.pane.session_name)
+            .and_then(|_| tmux::select_pane(&row.pane.pane_id));
+        if result.is_ok() {
+            self.should_quit = true;
         }
     }
 
@@ -1117,6 +1257,16 @@ impl App {
     }
 
     fn start_kill(&mut self) {
+        if self.mode == Mode::Monitor {
+            let row = match self.monitor_rows.get(self.monitor_selected) {
+                Some(row) => row,
+                None => return,
+            };
+            self.confirming_process = Some((row.pid, row.command.clone()));
+            self.mode = Mode::Confirming;
+            return;
+        }
+
         let i = match self.list_state.selected() {
             Some(i) if i < self.flat_entries.len() => i,
             _ => return,
@@ -1133,6 +1283,17 @@ impl App {
     }
 
     fn confirm_kill(&mut self) {
+        if let Some(entry) = self.confirming_process.clone() {
+            let pid = entry.0;
+            let result = procs::kill_process(pid);
+            self.confirming_process = None;
+            self.mode = Mode::Monitor;
+            if result.is_ok() {
+                let _ = self.refresh_monitor();
+            }
+            return;
+        }
+
         let node_id = match &self.confirming_node {
             Some(id) => id.clone(),
             None => return,
@@ -1187,6 +1348,9 @@ impl App {
     }
 
     pub fn confirming_label(&self) -> Option<String> {
+        if let Some(entry) = self.confirming_process.as_ref() {
+            return Some(format!("{} ({})", entry.1, entry.0));
+        }
         let node_id = self.confirming_node.as_ref()?;
         let label = match node_id {
             NodeId::Session(id) => {
