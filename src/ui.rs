@@ -4,7 +4,7 @@ use ansi_to_tui::IntoText;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Padding, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Padding, Paragraph, Wrap};
 use ratatui::Frame;
 
 use crate::app::{App, MonitorSort, RenameTarget};
@@ -43,6 +43,10 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     if app.mode == Mode::Renaming {
         render_rename_input(frame, app);
+    }
+
+    if app.mode == Mode::MoveWindow {
+        render_move_window(frame, app);
     }
 
     if app.mode == Mode::About {
@@ -260,6 +264,72 @@ fn render_rename_input(frame: &mut Frame, app: &App) {
         .alignment(Alignment::Left);
 
     frame.render_widget(popup, area);
+}
+
+fn render_move_window(frame: &mut Frame, app: &App) {
+    let area = centered_rect(60, 16, frame.area());
+    frame.render_widget(Clear, area);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(app.primary_color))
+        .title(" Move window -> session ");
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(0), Constraint::Length(1)])
+        .split(inner);
+
+    if app.move_candidates.is_empty() {
+        let hint = Paragraph::new(
+            Span::styled(
+                "no matches - type a name to create",
+                Style::default().fg(Color::DarkGray),
+            )
+        )
+            .alignment(Alignment::Center);
+        frame.render_widget(hint, chunks[0]);
+    } else {
+        let items: Vec<ListItem> = app.move_candidates.iter().map(|candidate| {
+            let item = ListItem::new(candidate.label.clone());
+            if candidate.dim {
+                item.style(Style::default().add_modifier(Modifier::DIM))
+            } else {
+                item
+            }
+        }).collect();
+        let list = List::new(items)
+            .highlight_style(app.highlight_style);
+        let mut state = ListState::default();
+        state.select(Some(app.move_selected));
+        frame.render_stateful_widget(list, chunks[0], &mut state);
+    }
+
+    let chars: Vec<char> = app.move_query.chars().collect();
+    let before: String = chars[..app.move_cursor].iter().collect();
+    let cursor_char = if app.move_cursor < chars.len() {
+        chars[app.move_cursor].to_string()
+    } else {
+        " ".to_string()
+    };
+    let after: String = if app.move_cursor < chars.len() {
+        chars[app.move_cursor + 1..].iter().collect()
+    } else {
+        String::new()
+    };
+    let search_line = Line::from(vec![
+        Span::raw(format!("Search: {}", before)),
+        Span::styled(
+            cursor_char,
+            Style::default()
+                .bg(Color::White)
+                .fg(Color::Black),
+        ),
+        Span::raw(after),
+    ]);
+    frame.render_widget(Paragraph::new(search_line), chunks[1]);
 }
 
 fn render_about(frame: &mut Frame) {

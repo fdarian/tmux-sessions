@@ -120,6 +120,20 @@ pub enum RenameTarget {
     Window(String),  // window id (@N)
 }
 
+#[derive(Clone)]
+pub enum MoveTarget {
+    Existing(String),
+    Dead { name: String, cwd: String },
+    New { name: String, cwd: String },
+}
+
+#[derive(Clone)]
+pub struct MoveCandidate {
+    pub label: String,
+    pub dim: bool,
+    pub target: MoveTarget,
+}
+
 pub struct DeadSession {
     pub name: String,
     pub display_name: String,
@@ -154,6 +168,12 @@ pub struct App {
     pub renaming_target: Option<RenameTarget>,
     pub rename_buffer: String,
     pub rename_cursor: usize,
+    pub move_query: String,
+    pub move_cursor: usize,
+    pub move_candidates: Vec<MoveCandidate>,
+    pub move_selected: usize,
+    pub move_source_window_id: Option<String>,
+    pub move_source_session_cwd: String,
     pub dead_sessions: Vec<DeadSession>,
     pub monitor_rows: Vec<ProcessRow>,
     pub monitor_selected: usize,
@@ -291,6 +311,12 @@ impl App {
             renaming_target: None,
             rename_buffer: String::new(),
             rename_cursor: 0,
+            move_query: String::new(),
+            move_cursor: 0,
+            move_candidates: Vec::new(),
+            move_selected: 0,
+            move_source_window_id: None,
+            move_source_session_cwd: String::new(),
             dead_sessions,
             monitor_rows: Vec::new(),
             monitor_selected: 0,
@@ -402,6 +428,83 @@ impl App {
                 last_seen: d.last_seen,
             }).collect();
             self.flat_entries = tree::flatten_filtered(&self.sessions, &self.windows, &dead_refs, &self.filter_query);
+        }
+    }
+
+    fn reset_move_window_state(&mut self) {
+        self.move_query = String::new();
+        self.move_cursor = 0;
+        self.move_candidates.clear();
+        self.move_selected = 0;
+        self.move_source_window_id = None;
+        self.move_source_session_cwd = String::new();
+    }
+
+    fn rebuild_move_candidates(&mut self) {
+        let query_lc = self.move_query.to_lowercase();
+        let source_session_id = self.move_source_window_id.as_ref()
+            .and_then(|window_id| self.windows.iter().find(|window| window.id == *window_id))
+            .map(|window| window.session_id.clone());
+
+        let mut candidates = Vec::new();
+        let mut shown_names = HashSet::new();
+
+        for session in self.sessions.iter() {
+            if let Some(id) = source_session_id.as_ref() {
+                if session.id == *id {
+                    continue;
+                }
+            }
+            if !self.move_query.is_empty()
+                && !session.display_name.to_lowercase().contains(&query_lc)
+            {
+                continue;
+            }
+            shown_names.insert(session.name.clone());
+            candidates.push(MoveCandidate {
+                label: session.display_name.clone(),
+                dim: false,
+                target: MoveTarget::Existing(session.name.clone()),
+            });
+        }
+
+        for dead_session in self.dead_sessions.iter() {
+            if shown_names.contains(&dead_session.name) {
+                continue;
+            }
+            if !self.move_query.is_empty()
+                && !dead_session.display_name.to_lowercase().contains(&query_lc)
+            {
+                continue;
+            }
+            shown_names.insert(dead_session.name.clone());
+            candidates.push(MoveCandidate {
+                label: dead_session.display_name.clone(),
+                dim: true,
+                target: MoveTarget::Dead {
+                    name: dead_session.name.clone(),
+                    cwd: dead_session.cwd.clone(),
+                },
+            });
+        }
+
+        let trimmed = self.move_query.trim();
+        if !trimmed.is_empty() && !shown_names.contains(trimmed) {
+            candidates.push(MoveCandidate {
+                label: format!("+ Create new session \"{}\"", trimmed),
+                dim: false,
+                target: MoveTarget::New {
+                    name: trimmed.to_string(),
+                    cwd: self.move_source_session_cwd.clone(),
+                },
+            });
+        }
+
+        self.move_candidates = candidates;
+        if self.move_candidates.is_empty() {
+            self.move_selected = 0;
+        } else if self.move_selected >= self.move_candidates.len() {
+            self.move_selected = self.move_candidates.len() - 1;
         }
     }
 
@@ -902,6 +1005,40 @@ impl App {
                 self.rebuild_flat_entries();
                 self.update_preview();
             }
+            Action::EnterMoveWindow => {
+                let i = match self.list_state.selected() {
+                    Some(i) if i < self.flat_entries.len() => i,
+                    _ => return,
+                };
+                let source_session_id = match &self.flat_entries[i].node_id {
+                    NodeId::Window(session_id, window_id) => {
+                        self.move_source_window_id = Some(window_id.clone());
+                        session_id.clone()
+                    }
+                    NodeId::Pane(session_id, window_id, _) => {
+                        self.move_source_window_id = Some(window_id.clone());
+                        session_id.clone()
+                    }
+                    NodeId::Session(_)
+                    | NodeId::Group(_)
+                    | NodeId::Separator
+                    | NodeId::DeadSession(_) => return,
+                };
+                let source_session_cwd = match self.sessions.iter().find(|session| session.id == source_session_id) {
+                    Some(session) => session.cwd.clone(),
+                    None => {
+                        self.move_source_window_id = None;
+                        return;
+                    }
+                };
+                self.move_query = String::new();
+                self.move_cursor = 0;
+                self.move_candidates.clear();
+                self.move_selected = 0;
+                self.move_source_session_cwd = source_session_cwd;
+                self.rebuild_move_candidates();
+                self.mode = Mode::MoveWindow;
+            }
             Action::FilterChar(c) => {
                 let byte_offset = self.filter_query.char_indices()
                     .nth(self.filter_cursor)
@@ -1044,6 +1181,173 @@ impl App {
                     .unwrap_or(0);
                 self.list_state.select(Some(new_index));
                 self.update_preview();
+            }
+            Action::MoveWindowChar(c) => {
+                let byte_offset = self.move_query.char_indices()
+                    .nth(self.move_cursor)
+                    .map(|(i, _)| i)
+                    .unwrap_or(self.move_query.len());
+                self.move_query.insert(byte_offset, c);
+                self.move_cursor += 1;
+                self.rebuild_move_candidates();
+                self.move_selected = 0;
+            }
+            Action::MoveWindowBackspace => {
+                if self.move_cursor > 0 {
+                    let byte_before = self.move_query.char_indices()
+                        .nth(self.move_cursor - 1)
+                        .map(|(i, _)| i)
+                        .unwrap_or(self.move_query.len());
+                    let byte_at = self.move_query.char_indices()
+                        .nth(self.move_cursor)
+                        .map(|(i, _)| i)
+                        .unwrap_or(self.move_query.len());
+                    self.move_query.drain(byte_before..byte_at);
+                    self.move_cursor -= 1;
+                    self.rebuild_move_candidates();
+                    self.move_selected = 0;
+                }
+            }
+            Action::MoveWindowDeleteForward => {
+                let len = self.move_query.chars().count();
+                if self.move_cursor < len {
+                    let byte_at = self.move_query.char_indices()
+                        .nth(self.move_cursor)
+                        .map(|(i, _)| i)
+                        .unwrap_or(self.move_query.len());
+                    let byte_next = self.move_query.char_indices()
+                        .nth(self.move_cursor + 1)
+                        .map(|(i, _)| i)
+                        .unwrap_or(self.move_query.len());
+                    self.move_query.drain(byte_at..byte_next);
+                    self.rebuild_move_candidates();
+                    self.move_selected = 0;
+                }
+            }
+            Action::MoveWindowKillWord => {
+                let chars: Vec<char> = self.move_query.chars().collect();
+                let mut pos = self.move_cursor;
+                while pos > 0 && chars[pos - 1].is_whitespace() {
+                    pos -= 1;
+                }
+                while pos > 0 && !chars[pos - 1].is_whitespace() {
+                    pos -= 1;
+                }
+                let start_byte = self.move_query.char_indices()
+                    .nth(pos)
+                    .map(|(i, _)| i)
+                    .unwrap_or(self.move_query.len());
+                let end_byte = self.move_query.char_indices()
+                    .nth(self.move_cursor)
+                    .map(|(i, _)| i)
+                    .unwrap_or(self.move_query.len());
+                self.move_query.drain(start_byte..end_byte);
+                self.move_cursor = pos;
+                self.rebuild_move_candidates();
+                self.move_selected = 0;
+            }
+            Action::MoveWindowKillLine => {
+                let byte_offset = self.move_query.char_indices()
+                    .nth(self.move_cursor)
+                    .map(|(i, _)| i)
+                    .unwrap_or(self.move_query.len());
+                self.move_query.drain(..byte_offset);
+                self.move_cursor = 0;
+                self.rebuild_move_candidates();
+                self.move_selected = 0;
+            }
+            Action::MoveWindowKillLineForward => {
+                let byte_offset = self.move_query.char_indices()
+                    .nth(self.move_cursor)
+                    .map(|(i, _)| i)
+                    .unwrap_or(self.move_query.len());
+                self.move_query.truncate(byte_offset);
+                self.rebuild_move_candidates();
+                self.move_selected = 0;
+            }
+            Action::MoveWindowCursorLeft => {
+                if self.move_cursor > 0 {
+                    self.move_cursor -= 1;
+                }
+            }
+            Action::MoveWindowCursorRight => {
+                let len = self.move_query.chars().count();
+                if self.move_cursor < len {
+                    self.move_cursor += 1;
+                }
+            }
+            Action::MoveWindowCursorWordLeft => {
+                let chars: Vec<char> = self.move_query.chars().collect();
+                let mut pos = self.move_cursor;
+                while pos > 0 && chars[pos - 1].is_whitespace() {
+                    pos -= 1;
+                }
+                while pos > 0 && !chars[pos - 1].is_whitespace() {
+                    pos -= 1;
+                }
+                self.move_cursor = pos;
+            }
+            Action::MoveWindowCursorWordRight => {
+                let chars: Vec<char> = self.move_query.chars().collect();
+                let len = chars.len();
+                let mut pos = self.move_cursor;
+                while pos < len && !chars[pos].is_whitespace() {
+                    pos += 1;
+                }
+                while pos < len && chars[pos].is_whitespace() {
+                    pos += 1;
+                }
+                self.move_cursor = pos;
+            }
+            Action::MoveWindowCursorStart => {
+                self.move_cursor = 0;
+            }
+            Action::MoveWindowCursorEnd => {
+                self.move_cursor = self.move_query.chars().count();
+            }
+            Action::MoveWindowNext => {
+                if self.move_selected + 1 < self.move_candidates.len() {
+                    self.move_selected += 1;
+                }
+            }
+            Action::MoveWindowPrev => {
+                if self.move_selected > 0 {
+                    self.move_selected -= 1;
+                }
+            }
+            Action::ConfirmMoveWindow => {
+                let src_window_id = match self.move_source_window_id.clone() {
+                    Some(id) => id,
+                    None => {
+                        self.reset_move_window_state();
+                        self.mode = Mode::Normal;
+                        return;
+                    }
+                };
+                let candidate = match self.move_candidates.get(self.move_selected).cloned() {
+                    Some(candidate) => candidate,
+                    None => return,
+                };
+                let result = match candidate.target {
+                    MoveTarget::Existing(name) => tmux::move_window(&src_window_id, &name),
+                    MoveTarget::Dead { name, cwd } => {
+                        tmux::new_session(&name, &cwd)
+                            .and_then(|_| tmux::move_window(&src_window_id, &name))
+                    }
+                    MoveTarget::New { name, cwd } => {
+                        tmux::new_session(&name, &cwd)
+                            .and_then(|_| tmux::move_window(&src_window_id, &name))
+                    }
+                };
+                self.reset_move_window_state();
+                self.mode = Mode::Normal;
+                if result.is_ok() {
+                    let _ = self.refresh();
+                }
+            }
+            Action::CancelMoveWindow => {
+                self.reset_move_window_state();
+                self.mode = Mode::Normal;
             }
             Action::SelectIndex(i) => {
                 if i < self.flat_entries.len() {
