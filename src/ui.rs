@@ -66,8 +66,9 @@ fn render_tree(frame: &mut Frame, app: &mut App, area: Rect) {
     let mut items = Vec::with_capacity(app.flat_entries.len());
     for entry in &app.flat_entries {
         let is_expanded = app.opened.contains(&entry.node_id);
-        let raw_line = tree::format_line(entry, shortcut_index, is_expanded, key_width);
-        if entry.node_id != NodeId::Separator {
+        let display_index = if matches!(entry.node_id, NodeId::Group(_)) { usize::MAX } else { shortcut_index };
+        let raw_line = tree::format_line(entry, display_index, is_expanded, key_width);
+        if entry.node_id != NodeId::Separator && !matches!(entry.node_id, NodeId::Group(_)) {
             shortcut_index += 1;
         }
         let is_marked = match &entry.node_id {
