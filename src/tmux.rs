@@ -266,6 +266,11 @@ pub fn rename_window(target: &str, new_name: &str) -> io::Result<()> {
     run_tmux(&["rename-window", "-t", target, new_name])
 }
 
+pub fn move_window(src_window_id: &str, target_session: &str) -> io::Result<()> {
+    let target = format!("{}:", target_session);
+    run_tmux(&["move-window", "-s", src_window_id, "-t", &target])
+}
+
 pub fn kill_window(target: &str) -> io::Result<()> {
     run_tmux(&["kill-window", "-t", target])
 }

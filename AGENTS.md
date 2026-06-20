@@ -11,7 +11,7 @@ src/
   main.rs    — entry point, terminal setup/teardown, event loop
   app.rs     — App state, Mode, handle_action (TEA update), PreviewPane struct
   config.rs  — optional config loading (~/.config/tmux-sessions/config.json), session name formatter
-  tmux.rs    — all tmux command interaction (list/kill/switch/capture); capture_pane_raw, get_mode_style, parse_style functions
+  tmux.rs    — all tmux command interaction (list/kill/switch/capture); move_window, capture_pane_raw, get_mode_style, parse_style functions
   tree.rs    — NodeId enum, FlatEntry struct, flatten/format_line for tree rendering
   history.rs — recently-closed session history (~/.config/tmux-sessions/history.json): load/prune, upsert live sessions
   ui.rs      — render: vertical layout, List-based tree, preview, confirmation overlay
@@ -85,9 +85,19 @@ cargo run
 | `Shift+K` / `Shift+J` | Move pinned session up / down (no-op if not pinned) |
 | `x` | Kill selected (with confirmation) |
 | `r` | Rename selected (session/window) |
+| `v` | Toggle visual selection mode (j/k extends the range) |
+| `M` | Move selected windows to a session |
 | `R` | Refresh tree |
 | `m` | Open process monitor |
 | `q` | Quit |
+| `Esc` | Clear the selection / exit selection mode, otherwise quit |
+
+In move-window mode:
+- type to search sessions or enter a new session name
+- `↓` / `Ctrl-N` — move down through candidates
+- `↑` / `Ctrl-P` — move up through candidates
+- `Enter` — confirm move (or create the target session, then move)
+- `Esc` — cancel
 
 In process monitor mode:
 - `j` / `↓` — move down
