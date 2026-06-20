@@ -168,11 +168,11 @@ pub struct App {
     pub renaming_target: Option<RenameTarget>,
     pub rename_buffer: String,
     pub rename_cursor: usize,
+    pub marked_windows: Vec<String>,
     pub move_query: String,
     pub move_cursor: usize,
     pub move_candidates: Vec<MoveCandidate>,
     pub move_selected: usize,
-    pub move_source_window_id: Option<String>,
     pub move_source_session_cwd: String,
     pub dead_sessions: Vec<DeadSession>,
     pub monitor_rows: Vec<ProcessRow>,
@@ -311,11 +311,11 @@ impl App {
             renaming_target: None,
             rename_buffer: String::new(),
             rename_cursor: 0,
+            marked_windows: Vec::new(),
             move_query: String::new(),
             move_cursor: 0,
             move_candidates: Vec::new(),
             move_selected: 0,
-            move_source_window_id: None,
             move_source_session_cwd: String::new(),
             dead_sessions,
             monitor_rows: Vec::new(),
@@ -436,21 +436,30 @@ impl App {
         self.move_cursor = 0;
         self.move_candidates.clear();
         self.move_selected = 0;
-        self.move_source_window_id = None;
         self.move_source_session_cwd = String::new();
     }
 
     fn rebuild_move_candidates(&mut self) {
         let query_lc = self.move_query.to_lowercase();
-        let source_session_id = self.move_source_window_id.as_ref()
-            .and_then(|window_id| self.windows.iter().find(|window| window.id == *window_id))
-            .map(|window| window.session_id.clone());
+        let mut source_session_ids = HashSet::new();
+        for window_id in self.marked_windows.iter() {
+            let source_window = self.windows.iter()
+                .find(|window| window.id == *window_id);
+            if let Some(source_window) = source_window {
+                source_session_ids.insert(source_window.session_id.clone());
+            }
+        }
+        let excluded_session_id = if source_session_ids.len() == 1 {
+            source_session_ids.iter().next().cloned()
+        } else {
+            None
+        };
 
         let mut candidates = Vec::new();
         let mut shown_names = HashSet::new();
 
         for session in self.sessions.iter() {
-            if let Some(id) = source_session_id.as_ref() {
+            if let Some(id) = excluded_session_id.as_ref() {
                 if session.id == *id {
                     continue;
                 }
@@ -759,6 +768,13 @@ impl App {
     pub fn handle_action(&mut self, action: Action) {
         match action {
             Action::Quit => self.should_quit = true,
+            Action::ClearMarksOrQuit => {
+                if self.marked_windows.is_empty() {
+                    self.should_quit = true;
+                } else {
+                    self.marked_windows.clear();
+                }
+            }
             Action::MoveUp => {
                 if self.mode == Mode::Monitor {
                     if self.monitor_selected > 0 {
@@ -1005,36 +1021,39 @@ impl App {
                 self.rebuild_flat_entries();
                 self.update_preview();
             }
-            Action::EnterMoveWindow => {
+            Action::ToggleMarkWindow => {
                 let i = match self.list_state.selected() {
                     Some(i) if i < self.flat_entries.len() => i,
                     _ => return,
                 };
-                let source_session_id = match &self.flat_entries[i].node_id {
-                    NodeId::Window(session_id, window_id) => {
-                        self.move_source_window_id = Some(window_id.clone());
-                        session_id.clone()
-                    }
-                    NodeId::Pane(session_id, window_id, _) => {
-                        self.move_source_window_id = Some(window_id.clone());
-                        session_id.clone()
-                    }
+                let window_id = match &self.flat_entries[i].node_id {
+                    NodeId::Window(_, window_id) => window_id.clone(),
                     NodeId::Session(_)
+                    | NodeId::Pane(_, _, _)
                     | NodeId::Group(_)
                     | NodeId::Separator
                     | NodeId::DeadSession(_) => return,
                 };
-                let source_session_cwd = match self.sessions.iter().find(|session| session.id == source_session_id) {
-                    Some(session) => session.cwd.clone(),
-                    None => {
-                        self.move_source_window_id = None;
-                        return;
-                    }
+                if self.marked_windows.contains(&window_id) {
+                    self.marked_windows.retain(|marked_window_id| *marked_window_id != window_id);
+                } else {
+                    self.marked_windows.push(window_id);
+                }
+            }
+            Action::EnterMoveWindow => {
+                let first_marked_window_id = match self.marked_windows.first() {
+                    Some(window_id) => window_id.clone(),
+                    None => return,
                 };
-                self.move_query = String::new();
-                self.move_cursor = 0;
-                self.move_candidates.clear();
-                self.move_selected = 0;
+                let source_window = match self.windows.iter().find(|window| window.id == first_marked_window_id) {
+                    Some(window) => window,
+                    None => return,
+                };
+                let source_session_cwd = match self.sessions.iter().find(|session| session.id == source_window.session_id) {
+                    Some(session) => session.cwd.clone(),
+                    None => return,
+                };
+                self.reset_move_window_state();
                 self.move_source_session_cwd = source_session_cwd;
                 self.rebuild_move_candidates();
                 self.mode = Mode::MoveWindow;
@@ -1316,34 +1335,58 @@ impl App {
                 }
             }
             Action::ConfirmMoveWindow => {
-                let src_window_id = match self.move_source_window_id.clone() {
-                    Some(id) => id,
-                    None => {
-                        self.reset_move_window_state();
-                        self.mode = Mode::Normal;
-                        return;
-                    }
-                };
+                let sources = self.marked_windows.clone();
+                if sources.is_empty() {
+                    self.reset_move_window_state();
+                    self.mode = Mode::Normal;
+                    return;
+                }
                 let candidate = match self.move_candidates.get(self.move_selected).cloned() {
                     Some(candidate) => candidate,
                     None => return,
                 };
-                let result = match candidate.target {
-                    MoveTarget::Existing(name) => tmux::move_window(&src_window_id, &name),
+                let mut target_session_id = None;
+                let target_name = match candidate.target {
+                    MoveTarget::Existing(name) => {
+                        target_session_id = self.sessions.iter()
+                            .find(|session| session.name == name)
+                            .map(|session| session.id.clone());
+                        name
+                    }
                     MoveTarget::Dead { name, cwd } => {
-                        tmux::new_session(&name, &cwd)
-                            .and_then(|_| tmux::move_window(&src_window_id, &name))
+                        if tmux::new_session(&name, &cwd).is_err() {
+                            self.reset_move_window_state();
+                            self.mode = Mode::Normal;
+                            return;
+                        }
+                        name
                     }
                     MoveTarget::New { name, cwd } => {
-                        tmux::new_session(&name, &cwd)
-                            .and_then(|_| tmux::move_window(&src_window_id, &name))
+                        if tmux::new_session(&name, &cwd).is_err() {
+                            self.reset_move_window_state();
+                            self.mode = Mode::Normal;
+                            return;
+                        }
+                        name
                     }
                 };
+                for window_id in sources.iter() {
+                    let current_session_id = self.windows.iter()
+                        .find(|window| window.id == *window_id)
+                        .map(|window| window.session_id.clone());
+                    if let Some(existing_target_session_id) = target_session_id.as_ref() {
+                        if let Some(current_session_id) = current_session_id.as_ref() {
+                            if *current_session_id == *existing_target_session_id {
+                                continue;
+                            }
+                        }
+                    }
+                    let _ = tmux::move_window(window_id, &target_name);
+                }
+                self.marked_windows.clear();
                 self.reset_move_window_state();
                 self.mode = Mode::Normal;
-                if result.is_ok() {
-                    let _ = self.refresh();
-                }
+                let _ = self.refresh();
             }
             Action::CancelMoveWindow => {
                 self.reset_move_window_state();

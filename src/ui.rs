@@ -66,10 +66,33 @@ fn render_tree(frame: &mut Frame, app: &mut App, area: Rect) {
     let mut items = Vec::with_capacity(app.flat_entries.len());
     for entry in &app.flat_entries {
         let is_expanded = app.opened.contains(&entry.node_id);
-        let line = tree::format_line(entry, shortcut_index, is_expanded, key_width);
+        let raw_line = tree::format_line(entry, shortcut_index, is_expanded, key_width);
         if entry.node_id != NodeId::Separator {
             shortcut_index += 1;
         }
+        let is_marked = match &entry.node_id {
+            NodeId::Window(_, window_id) => app.marked_windows.contains(window_id),
+            _ => false,
+        };
+        let mut spans = Vec::new();
+        if is_marked {
+            spans.push(Span::styled(
+                "● ",
+                Style::default()
+                    .fg(app.primary_color)
+                    .add_modifier(Modifier::BOLD),
+            ));
+        } else {
+            spans.push(Span::raw("  "));
+        }
+        let line_style = raw_line.style;
+        let line_alignment = raw_line.alignment;
+        for span in raw_line.spans {
+            spans.push(span);
+        }
+        let mut line = Line::from(spans);
+        line.style = line_style;
+        line.alignment = line_alignment;
         let item = ListItem::new(line);
         let is_hidden = match &entry.node_id {
             NodeId::Session(id) | NodeId::Window(id, _) | NodeId::Pane(id, _, _) => {
@@ -133,6 +156,25 @@ fn render_preview(frame: &mut Frame, app: &App, area: Rect) {
     let inner = outer_block.inner(area);
     frame.render_widget(outer_block, area);
 
+    let preview_area = if app.marked_windows.is_empty() {
+        inner
+    } else {
+        let marked_count = app.marked_windows.len();
+        let hint = format!(
+            " {} selected · M move to session · v unmark · Esc clear ",
+            marked_count
+        );
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(1), Constraint::Min(0)])
+            .split(inner);
+        frame.render_widget(
+            Paragraph::new(hint).style(Style::default().fg(app.primary_color)),
+            chunks[0],
+        );
+        chunks[1]
+    };
+
     if app.preview_panes.is_empty() {
         return;
     }
@@ -144,7 +186,7 @@ fn render_preview(frame: &mut Frame, app: &App, area: Rect) {
     let pane_areas = Layout::default()
         .direction(Direction::Horizontal)
         .constraints(constraints)
-        .split(inner);
+        .split(preview_area);
 
     for (idx, preview_pane) in app.preview_panes.iter().enumerate() {
         let pane_area = pane_areas[idx];
@@ -270,10 +312,16 @@ fn render_move_window(frame: &mut Frame, app: &App) {
     let area = centered_rect(60, 16, frame.area());
     frame.render_widget(Clear, area);
 
+    let marked_count = app.marked_windows.len();
+    let title = if marked_count == 1 {
+        " Move 1 window -> session ".to_string()
+    } else {
+        format!(" Move {} windows -> session ", marked_count)
+    };
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(app.primary_color))
-        .title(" Move window -> session ");
+        .title(title);
     let inner = block.inner(area);
     frame.render_widget(block, area);
 

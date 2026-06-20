@@ -3,6 +3,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 #[derive(Clone)]
 pub enum Action {
     Quit,
+    ClearMarksOrQuit,
     MoveUp,
     MoveDown,
     CollapseOrParent,
@@ -24,6 +25,7 @@ pub enum Action {
     MovePinDown,
     EnterFilter,
     EnterMoveWindow,
+    ToggleMarkWindow,
     FilterChar(char),
     FilterBackspace,
     FilterDeleteForward,
@@ -100,7 +102,8 @@ pub fn map_key(key: KeyEvent, mode: &Mode) -> Action {
 
     match mode {
         Mode::Normal => match (key.code, key.modifiers) {
-            (KeyCode::Char('q'), _) | (KeyCode::Esc, _) => Action::Quit,
+            (KeyCode::Char('q'), _) => Action::Quit,
+            (KeyCode::Esc, _) => Action::ClearMarksOrQuit,
             (KeyCode::Char('k'), KeyModifiers::NONE) | (KeyCode::Up, KeyModifiers::NONE) => Action::MoveUp,
             (KeyCode::Char('p'), KeyModifiers::CONTROL) => Action::MoveUp,
             (KeyCode::Char('j'), KeyModifiers::NONE) | (KeyCode::Down, KeyModifiers::NONE) => Action::MoveDown,
@@ -116,7 +119,8 @@ pub fn map_key(key: KeyEvent, mode: &Mode) -> Action {
             (KeyCode::Char('x'), _) => Action::Kill,
             (KeyCode::Char('R'), KeyModifiers::NONE | KeyModifiers::SHIFT) | (KeyCode::Char('r'), KeyModifiers::SHIFT) => Action::Refresh,
             (KeyCode::Char('r'), _) => Action::StartRename,
-            (KeyCode::Char('v'), KeyModifiers::NONE) => Action::EnterMoveWindow,
+            (KeyCode::Char('v'), KeyModifiers::NONE) => Action::ToggleMarkWindow,
+            (KeyCode::Char('M'), KeyModifiers::NONE | KeyModifiers::SHIFT) => Action::EnterMoveWindow,
             (KeyCode::Char('.'), _) => Action::ToggleShowHidden,
             (KeyCode::Char('/'), _) => Action::EnterFilter,
             (KeyCode::Char('m'), _) => Action::EnterMonitor,
