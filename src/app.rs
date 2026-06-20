@@ -557,48 +557,10 @@ impl App {
         };
 
         let node_id = &self.flat_entries[i].node_id;
-        let bound_session_id = self.flat_entries[i].bound_session_id.clone();
         match node_id {
-            NodeId::Separator | NodeId::DeadSession(_) => {
+            NodeId::Separator | NodeId::DeadSession(_) | NodeId::Group(_) => {
                 self.preview_panes.clear();
                 self.preview_title.clear();
-            }
-            NodeId::Group(_) => {
-                match bound_session_id {
-                    None => {
-                        self.preview_panes.clear();
-                        self.preview_title.clear();
-                    }
-                    Some(ref session_id) => {
-                        let session_name = self.sessions.iter()
-                            .find(|s| s.id == *session_id)
-                            .map(|s| s.display_name.clone())
-                            .unwrap_or_else(|| session_id.clone());
-                        self.preview_title = session_name;
-
-                        let session_windows: Vec<&tmux::Window> = self.windows.iter()
-                            .filter(|w| w.session_id == *session_id)
-                            .collect();
-
-                        self.preview_panes = session_windows.iter().map(|window| {
-                            let pane_id = self.panes.iter()
-                                .find(|p| p.session_id == *session_id && p.window_id == window.id && p.active)
-                                .or_else(|| self.panes.iter().find(|p| p.session_id == *session_id && p.window_id == window.id))
-                                .map(|p| p.id.clone());
-
-                            let content = match pane_id {
-                                Some(id) => tmux::capture_pane_raw(&id).unwrap_or_default(),
-                                None => Vec::new(),
-                            };
-
-                            PreviewPane {
-                                label: format!("{}:{}", window.index, window.name),
-                                content,
-                                is_active: window.active,
-                            }
-                        }).collect();
-                    }
-                }
             }
             NodeId::Session(session_id) => {
                 let session_name = self.sessions.iter()
@@ -676,15 +638,8 @@ impl App {
         };
 
         let node_id = &self.flat_entries[i].node_id;
-        let bound_session_id = self.flat_entries[i].bound_session_id.clone();
         match node_id {
-            NodeId::Separator | NodeId::DeadSession(_) => (Vec::new(), 0),
-            NodeId::Group(_) => {
-                match bound_session_id {
-                    None => (Vec::new(), 0),
-                    Some(session_id) => self.build_full_preview_for_session(&session_id),
-                }
-            }
+            NodeId::Separator | NodeId::DeadSession(_) | NodeId::Group(_) => (Vec::new(), 0),
             NodeId::Pane(session_id, window_id, pane_id) => {
                 let session = self.sessions.iter().find(|s| s.id == *session_id);
                 let window = self.windows.iter().find(|w| w.id == *window_id);
@@ -861,11 +816,7 @@ impl App {
                     NodeId::Session(id) => id.clone(),
                     NodeId::Window(session_id, _) => session_id.clone(),
                     NodeId::Pane(session_id, _, _) => session_id.clone(),
-                    NodeId::Separator | NodeId::DeadSession(_) => return,
-                    NodeId::Group(_) => match self.flat_entries[i].bound_session_id.clone() {
-                        Some(id) => id,
-                        None => return,
-                    },
+                    NodeId::Separator | NodeId::DeadSession(_) | NodeId::Group(_) => return,
                 };
                 let session_name = match self.sessions.iter().find(|s| s.id == session_id) {
                     Some(s) => s.name.clone(),
@@ -893,11 +844,7 @@ impl App {
                     NodeId::Session(id) => id.clone(),
                     NodeId::Window(session_id, _) => session_id.clone(),
                     NodeId::Pane(session_id, _, _) => session_id.clone(),
-                    NodeId::Separator | NodeId::DeadSession(_) => return,
-                    NodeId::Group(_) => match self.flat_entries[i].bound_session_id.clone() {
-                        Some(id) => id,
-                        None => return,
-                    },
+                    NodeId::Separator | NodeId::DeadSession(_) | NodeId::Group(_) => return,
                 };
                 let session_name = match self.sessions.iter().find(|s| s.id == session_id) {
                     Some(s) => s.name.clone(),
@@ -1682,11 +1629,7 @@ impl App {
             NodeId::Session(id) => id.clone(),
             NodeId::Window(session_id, _) => session_id.clone(),
             NodeId::Pane(session_id, _, _) => session_id.clone(),
-            NodeId::Group(_) => match self.flat_entries[i].bound_session_id.clone() {
-                Some(id) => id,
-                None => return,
-            },
-            NodeId::Separator | NodeId::DeadSession(_) => return,
+            NodeId::Group(_) | NodeId::Separator | NodeId::DeadSession(_) => return,
         };
         let session_name = match self.sessions.iter().find(|s| s.id == session_id) {
             Some(s) => s.name.clone(),
@@ -1719,7 +1662,6 @@ impl App {
 
         let entry = &self.flat_entries[i];
         let node_id = &entry.node_id;
-        let bound_session_id = entry.bound_session_id.as_deref();
         let result = match node_id {
             NodeId::Session(id) => tmux::switch_client(id),
             NodeId::Window(session_id, window_id) => tmux::switch_client(session_id)
@@ -1727,11 +1669,7 @@ impl App {
             NodeId::Pane(session_id, window_id, pane_id) => tmux::switch_client(session_id)
                 .and_then(|_| tmux::select_window(window_id))
                 .and_then(|_| tmux::select_pane(pane_id)),
-            NodeId::Separator => return,
-            NodeId::Group(_) => match bound_session_id {
-                Some(id) => tmux::switch_client(id),
-                None => return,
-            },
+            NodeId::Separator | NodeId::Group(_) => return,
             NodeId::DeadSession(name) => {
                 let cwd = match self.dead_sessions.iter().find(|d| d.name == *name) {
                     Some(d) => d.cwd.clone(),
@@ -1764,8 +1702,7 @@ impl App {
         };
 
         match &self.flat_entries[i].node_id {
-            NodeId::Separator | NodeId::DeadSession(_) => return,
-            NodeId::Group(_) if self.flat_entries[i].bound_session_id.is_none() => return,
+            NodeId::Separator | NodeId::DeadSession(_) | NodeId::Group(_) => return,
             _ => {}
         }
 
@@ -1792,10 +1729,6 @@ impl App {
 
         let is_current_session = match &node_id {
             NodeId::Session(id) => *id == self.current_session_id,
-            NodeId::Group(_) => self.flat_entries.iter()
-                .find(|e| e.node_id == node_id)
-                .and_then(|e| e.bound_session_id.as_deref())
-                .map_or(false, |sid| sid == self.current_session_id),
             _ => false,
         };
 
@@ -1818,16 +1751,7 @@ impl App {
             NodeId::Session(id) => tmux::kill_session(id),
             NodeId::Window(_, window_id) => tmux::kill_window(window_id),
             NodeId::Pane(_, _, pane_id) => tmux::kill_pane(pane_id),
-            NodeId::Separator | NodeId::DeadSession(_) => return,
-            NodeId::Group(_) => {
-                let session_id = self.flat_entries.iter()
-                    .find(|e| e.node_id == node_id)
-                    .and_then(|e| e.bound_session_id.clone());
-                match session_id {
-                    Some(id) => tmux::kill_session(&id),
-                    None => return,
-                }
-            }
+            NodeId::Separator | NodeId::DeadSession(_) | NodeId::Group(_) => return,
         };
 
         self.mode = Mode::Normal;
@@ -1865,22 +1789,7 @@ impl App {
             NodeId::Pane(_, _, pane_id) => {
                 format!("pane {}", pane_id)
             }
-            NodeId::Separator | NodeId::DeadSession(_) => return None,
-            NodeId::Group(_) => {
-                let session_id = self.flat_entries.iter()
-                    .find(|e| e.node_id == *node_id)
-                    .and_then(|e| e.bound_session_id.as_deref().map(|s| s.to_string()));
-                match session_id {
-                    None => return None,
-                    Some(id) => {
-                        let name = self.sessions.iter()
-                            .find(|s| s.id == id)
-                            .map(|s| s.display_name.clone())
-                            .unwrap_or_else(|| id.clone());
-                        format!("session \"{}\"", name)
-                    }
-                }
-            }
+            NodeId::Separator | NodeId::DeadSession(_) | NodeId::Group(_) => return None,
         };
         Some(label)
     }
