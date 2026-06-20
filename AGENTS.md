@@ -85,12 +85,12 @@ cargo run
 | `Shift+K` / `Shift+J` | Move pinned session up / down (no-op if not pinned) |
 | `x` | Kill selected (with confirmation) |
 | `r` | Rename selected (session/window) |
-| `v` | Mark / unmark highlighted window |
-| `M` | Move marked windows to a session |
+| `v` | Toggle visual selection mode (j/k extends the range) |
+| `M` | Move selected windows to a session |
 | `R` | Refresh tree |
 | `m` | Open process monitor |
 | `q` | Quit |
-| `Esc` | Clear marks when any are set, otherwise quit |
+| `Esc` | Clear the selection / exit selection mode, otherwise quit |
 
 In move-window mode:
 - type to search sessions or enter a new session name

@@ -169,6 +169,8 @@ pub struct App {
     pub rename_buffer: String,
     pub rename_cursor: usize,
     pub marked_windows: Vec<String>,
+    pub selecting: bool,
+    pub selection_anchor: Option<usize>,
     pub move_query: String,
     pub move_cursor: usize,
     pub move_candidates: Vec<MoveCandidate>,
@@ -312,6 +314,8 @@ impl App {
             rename_buffer: String::new(),
             rename_cursor: 0,
             marked_windows: Vec::new(),
+            selecting: false,
+            selection_anchor: None,
             move_query: String::new(),
             move_cursor: 0,
             move_candidates: Vec::new(),
@@ -437,6 +441,31 @@ impl App {
         self.move_candidates.clear();
         self.move_selected = 0;
         self.move_source_session_cwd = String::new();
+    }
+
+    fn recompute_selection_range(&mut self) {
+        let anchor = match self.selection_anchor {
+            Some(anchor) => anchor,
+            None => return,
+        };
+        let cursor = match self.list_state.selected() {
+            Some(cursor) => cursor,
+            None => return,
+        };
+        if self.flat_entries.is_empty() {
+            self.marked_windows.clear();
+            return;
+        }
+
+        let lo = anchor.min(cursor);
+        let hi = anchor.max(cursor).min(self.flat_entries.len().saturating_sub(1));
+
+        self.marked_windows.clear();
+        for entry in self.flat_entries[lo..=hi].iter() {
+            if let NodeId::Window(_, window_id) = &entry.node_id {
+                self.marked_windows.push(window_id.clone());
+            }
+        }
     }
 
     fn rebuild_move_candidates(&mut self) {
@@ -769,10 +798,12 @@ impl App {
         match action {
             Action::Quit => self.should_quit = true,
             Action::ClearMarksOrQuit => {
-                if self.marked_windows.is_empty() {
-                    self.should_quit = true;
-                } else {
+                if self.selecting || !self.marked_windows.is_empty() {
                     self.marked_windows.clear();
+                    self.selecting = false;
+                    self.selection_anchor = None;
+                } else {
+                    self.should_quit = true;
                 }
             }
             Action::MoveUp => {
@@ -790,6 +821,9 @@ impl App {
                         if self.flat_entries[target].node_id != NodeId::Separator {
                             self.list_state.select(Some(target));
                             self.update_preview();
+                            if self.mode == Mode::Normal && self.selecting {
+                                self.recompute_selection_range();
+                            }
                             break;
                         }
                     }
@@ -810,6 +844,9 @@ impl App {
                         if self.flat_entries[target].node_id != NodeId::Separator {
                             self.list_state.select(Some(target));
                             self.update_preview();
+                            if self.mode == Mode::Normal && self.selecting {
+                                self.recompute_selection_range();
+                            }
                             break;
                         }
                     }
@@ -908,6 +945,9 @@ impl App {
             Action::MovePinUp => self.move_pin(-1),
             Action::MovePinDown => self.move_pin(1),
             Action::CollapseOrParent => {
+                if self.selecting {
+                    return;
+                }
                 if let Some(i) = self.list_state.selected() {
                     let node_id = self.flat_entries[i].node_id.clone();
                     if self.flat_entries[i].has_children && self.opened.contains(&node_id) {
@@ -933,6 +973,9 @@ impl App {
                 }
             }
             Action::ExpandOrChild => {
+                if self.selecting {
+                    return;
+                }
                 if let Some(i) = self.list_state.selected() {
                     let entry_has_children = self.flat_entries[i].has_children;
                     let entry_depth = self.flat_entries[i].depth;
@@ -1022,22 +1065,13 @@ impl App {
                 self.update_preview();
             }
             Action::ToggleMarkWindow => {
-                let i = match self.list_state.selected() {
-                    Some(i) if i < self.flat_entries.len() => i,
-                    _ => return,
-                };
-                let window_id = match &self.flat_entries[i].node_id {
-                    NodeId::Window(_, window_id) => window_id.clone(),
-                    NodeId::Session(_)
-                    | NodeId::Pane(_, _, _)
-                    | NodeId::Group(_)
-                    | NodeId::Separator
-                    | NodeId::DeadSession(_) => return,
-                };
-                if self.marked_windows.contains(&window_id) {
-                    self.marked_windows.retain(|marked_window_id| *marked_window_id != window_id);
+                if !self.selecting {
+                    self.selecting = true;
+                    self.selection_anchor = self.list_state.selected();
+                    self.recompute_selection_range();
                 } else {
-                    self.marked_windows.push(window_id);
+                    self.selecting = false;
+                    self.selection_anchor = None;
                 }
             }
             Action::EnterMoveWindow => {
@@ -1045,6 +1079,8 @@ impl App {
                     Some(window_id) => window_id.clone(),
                     None => return,
                 };
+                self.selecting = false;
+                self.selection_anchor = None;
                 let source_window = match self.windows.iter().find(|window| window.id == first_marked_window_id) {
                     Some(window) => window,
                     None => return,
@@ -1384,11 +1420,15 @@ impl App {
                     let _ = tmux::move_window(window_id, &target_name);
                 }
                 self.marked_windows.clear();
+                self.selecting = false;
+                self.selection_anchor = None;
                 self.reset_move_window_state();
                 self.mode = Mode::Normal;
                 let _ = self.refresh();
             }
             Action::CancelMoveWindow => {
+                self.selecting = false;
+                self.selection_anchor = None;
                 self.reset_move_window_state();
                 self.mode = Mode::Normal;
             }

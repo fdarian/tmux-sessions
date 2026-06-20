@@ -93,7 +93,11 @@ fn render_tree(frame: &mut Frame, app: &mut App, area: Rect) {
         let mut line = Line::from(spans);
         line.style = line_style;
         line.alignment = line_alignment;
-        let item = ListItem::new(line);
+        let item = if is_marked {
+            ListItem::new(line).style(Style::default().fg(app.primary_color))
+        } else {
+            ListItem::new(line)
+        };
         let is_hidden = match &entry.node_id {
             NodeId::Session(id) | NodeId::Window(id, _) | NodeId::Pane(id, _, _) => {
                 hidden_session_ids.contains(id)
@@ -156,12 +160,10 @@ fn render_preview(frame: &mut Frame, app: &App, area: Rect) {
     let inner = outer_block.inner(area);
     frame.render_widget(outer_block, area);
 
-    let preview_area = if app.marked_windows.is_empty() {
-        inner
-    } else {
+    let preview_area = if app.selecting {
         let marked_count = app.marked_windows.len();
         let hint = format!(
-            " {} selected · M move to session · v unmark · Esc clear ",
+            " {} selected · j/k extend · v done · M move · Esc clear ",
             marked_count
         );
         let chunks = Layout::default()
@@ -173,6 +175,23 @@ fn render_preview(frame: &mut Frame, app: &App, area: Rect) {
             chunks[0],
         );
         chunks[1]
+    } else if !app.marked_windows.is_empty() {
+        let marked_count = app.marked_windows.len();
+        let hint = format!(
+            " {} selected · M move · v reselect · Esc clear ",
+            marked_count
+        );
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(1), Constraint::Min(0)])
+            .split(inner);
+        frame.render_widget(
+            Paragraph::new(hint).style(Style::default().fg(app.primary_color)),
+            chunks[0],
+        );
+        chunks[1]
+    } else {
+        inner
     };
 
     if app.preview_panes.is_empty() {
