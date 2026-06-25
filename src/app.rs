@@ -1329,7 +1329,8 @@ impl App {
                     None => return,
                 };
                 let mut target_session_id = None;
-                let target_name = match candidate.target {
+                let mut cleanup_window_id: Option<String> = None;
+                let move_target = match candidate.target {
                     MoveTarget::Existing(name) => {
                         target_session_id = self.sessions.iter()
                             .find(|session| session.name == name)
@@ -1337,22 +1338,35 @@ impl App {
                         name
                     }
                     MoveTarget::Dead { name, cwd } => {
-                        if tmux::new_session(&name, &cwd).is_err() {
-                            self.reset_move_window_state();
-                            self.mode = Mode::Normal;
-                            return;
+                        match tmux::new_session(&name, &cwd) {
+                            Ok(created) => {
+                                target_session_id = Some(created.session_id.clone());
+                                cleanup_window_id = Some(created.initial_window_id.clone());
+                                created.session_id
+                            }
+                            Err(_) => {
+                                self.reset_move_window_state();
+                                self.mode = Mode::Normal;
+                                return;
+                            }
                         }
-                        name
                     }
                     MoveTarget::New { name, cwd } => {
-                        if tmux::new_session(&name, &cwd).is_err() {
-                            self.reset_move_window_state();
-                            self.mode = Mode::Normal;
-                            return;
+                        match tmux::new_session(&name, &cwd) {
+                            Ok(created) => {
+                                target_session_id = Some(created.session_id.clone());
+                                cleanup_window_id = Some(created.initial_window_id.clone());
+                                created.session_id
+                            }
+                            Err(_) => {
+                                self.reset_move_window_state();
+                                self.mode = Mode::Normal;
+                                return;
+                            }
                         }
-                        name
                     }
                 };
+                let mut moved_any = false;
                 for window_id in sources.iter() {
                     let current_session_id = self.windows.iter()
                         .find(|window| window.id == *window_id)
@@ -1364,7 +1378,14 @@ impl App {
                             }
                         }
                     }
-                    let _ = tmux::move_window(window_id, &target_name);
+                    if tmux::move_window(window_id, &move_target).is_ok() {
+                        moved_any = true;
+                    }
+                }
+                if let Some(window_id) = cleanup_window_id {
+                    if moved_any {
+                        let _ = tmux::kill_window(&window_id);
+                    }
                 }
                 self.marked_windows.clear();
                 self.selecting = false;

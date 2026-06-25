@@ -103,8 +103,28 @@ pub fn list_sessions(current_session_id: &str) -> io::Result<Vec<Session>> {
     Ok(sessions)
 }
 
-pub fn new_session(name: &str, cwd: &str) -> io::Result<()> {
-    run_tmux(&["new-session", "-d", "-s", name, "-c", cwd])
+pub struct CreatedSession {
+    pub session_id: String,
+    pub initial_window_id: String,
+}
+
+pub fn new_session(name: &str, cwd: &str) -> io::Result<CreatedSession> {
+    let output = run_tmux_output(&[
+        "new-session", "-d", "-s", name, "-c", cwd,
+        "-P", "-F", "#{session_id}\x1f#{window_id}",
+    ])?;
+    let line = output.trim();
+    let parts: Vec<&str> = line.splitn(2, '\x1f').collect();
+    if parts.len() != 2 || parts[0].is_empty() || parts[1].is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::Other,
+            "new-session returned an unexpected session/window id",
+        ));
+    }
+    Ok(CreatedSession {
+        session_id: parts[0].to_string(),
+        initial_window_id: parts[1].to_string(),
+    })
 }
 
 pub fn list_windows() -> io::Result<Vec<Window>> {
