@@ -445,6 +445,15 @@ fn render_create_session(frame: &mut Frame, app: &App) {
                 .alignment(Alignment::Right),
         );
     }
+    if let Some(err) = &app.create_load_error {
+        block = block.title_bottom(
+            Line::from(vec![Span::styled(
+                format!(" {} ", err),
+                Style::default().fg(Color::Red).add_modifier(Modifier::DIM),
+            )])
+                .alignment(Alignment::Left),
+        );
+    }
     let inner = block.inner(area);
     frame.render_widget(block, area);
 

@@ -215,6 +215,7 @@ pub struct App {
     pub create_worktrees: Vec<WorktreeEntry>,
     pub create_zoxide_entries: Vec<ZoxideEntry>,
     pub create_current_session_cwd: String,
+    pub create_load_error: Option<String>,
     pub dead_sessions: Vec<DeadSession>,
     pub monitor_rows: Vec<ProcessRow>,
     pub monitor_selected: usize,
@@ -392,6 +393,7 @@ impl App {
             create_worktrees: Vec::new(),
             create_zoxide_entries: Vec::new(),
             create_current_session_cwd: String::new(),
+            create_load_error: None,
             dead_sessions,
             monitor_rows: Vec::new(),
             monitor_selected: 0,
@@ -536,6 +538,7 @@ impl App {
         self.create_worktrees.clear();
         self.create_zoxide_entries.clear();
         self.create_current_session_cwd = String::new();
+        self.create_load_error = None;
     }
 
     fn recompute_selection_range(&mut self) {
@@ -1385,13 +1388,17 @@ impl App {
                 self.reset_create_state();
                 self.create_available_tabs.push(CreateTab::History);
 
+                let mut load_errors: Vec<String> = Vec::new();
+
                 match create::list_linked_worktree_paths(&current_dir) {
                     Ok(Some(worktrees)) => {
                         self.create_worktrees = worktrees;
                         self.create_available_tabs.push(CreateTab::Worktree);
                     }
                     Ok(None) => {}
-                    Err(_) => {}
+                    Err(e) => {
+                        load_errors.push(format!("worktree: {e}"));
+                    }
                 }
 
                 let zoxide_enabled = self.config.as_ref()
@@ -1404,8 +1411,14 @@ impl App {
                             self.create_available_tabs.push(CreateTab::Zoxide);
                         }
                         Ok(None) => {}
-                        Err(_) => {}
+                        Err(e) => {
+                            load_errors.push(format!("zoxide: {e}"));
+                        }
                     }
+                }
+
+                if !load_errors.is_empty() {
+                    self.create_load_error = Some(load_errors.join("  "));
                 }
 
                 self.create_current_session_cwd = match path_buf_to_string(current_dir, "current directory") {
