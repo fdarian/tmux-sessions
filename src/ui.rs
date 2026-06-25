@@ -196,6 +196,13 @@ fn render_preview(frame: &mut Frame, app: &App, area: Rect) {
     };
 
     if app.preview_panes.is_empty() {
+        if let Some(preview_notice) = app.preview_notice.as_ref() {
+            frame.render_widget(
+                Paragraph::new(preview_notice.as_str())
+                    .style(Style::default().add_modifier(Modifier::DIM)),
+                preview_area,
+            );
+        }
         return;
     }
 
