@@ -1328,7 +1328,7 @@ impl App {
                     Some(candidate) => candidate,
                     None => return,
                 };
-                let mut target_session_id = None;
+                let target_session_id;
                 let mut cleanup_window_id: Option<String> = None;
                 let move_target = match candidate.target {
                     MoveTarget::Existing(name) => {
