@@ -431,11 +431,20 @@ fn render_create_session(frame: &mut Frame, app: &App) {
         tab_spans.push(Span::styled(tab.label().to_string(), style));
     }
 
-    let block = Block::default()
+    let mut block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(app.primary_color))
         .title(Line::from(" Open Session ").alignment(Alignment::Left))
         .title(Line::from(tab_spans).alignment(Alignment::Right));
+    if app.create_available_tabs.len() > 1 {
+        block = block.title_bottom(
+            Line::from(vec![Span::styled(
+                " Tab / Shift+Tab switch mode ",
+                Style::default().add_modifier(Modifier::DIM),
+            )])
+                .alignment(Alignment::Right),
+        );
+    }
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
