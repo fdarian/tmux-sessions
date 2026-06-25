@@ -566,6 +566,8 @@ impl App {
     }
 
     pub fn update_preview(&mut self) {
+        self.preview_generation = self.preview_generation.wrapping_add(1);
+
         let selected_index = match self.list_state.selected() {
             Some(selected_index) if selected_index < self.flat_entries.len() => selected_index,
             _ => {
