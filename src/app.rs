@@ -248,11 +248,26 @@ fn create_match_result(
     query: &str,
     text: &str,
 ) -> Option<(i64, Vec<usize>)> {
-    if query.is_empty() {
-        Some((0, Vec::new()))
-    } else {
-        matcher.fuzzy_indices(text, query)
+    let terms: Vec<&str> = query.split_whitespace().collect();
+    if terms.is_empty() {
+        return Some((0, Vec::new()));
     }
+
+    let mut total_score = 0i64;
+    let mut match_indices = Vec::new();
+
+    for term in terms {
+        let term_match = matcher.fuzzy_indices(text, term)?;
+        total_score += term_match.0;
+        for index in term_match.1 {
+            match_indices.push(index);
+        }
+    }
+
+    match_indices.sort_unstable();
+    match_indices.dedup();
+
+    Some((total_score, match_indices))
 }
 
 fn compute_dead_sessions(
