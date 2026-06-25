@@ -1,5 +1,5 @@
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -24,6 +24,7 @@ pub enum CreateTarget {
     ResumeDead { name: String, cwd: String },
     NewNamed { name: String, cwd: String },
     PathDir { path: String },
+    NewWorktree { branch: String },
 }
 
 #[derive(Clone)]
@@ -150,6 +151,69 @@ pub fn list_linked_worktree_paths(dir: &Path) -> io::Result<Option<Vec<WorktreeE
         Ok(Some(entries))
     } else {
         Ok(None)
+    }
+}
+
+/// Returns worktrees when the cwd is inside a git work tree, regardless of linked count.
+/// Used when `worktree_create_command` is set so the tab appears even with 0 linked worktrees.
+pub fn list_worktrees_if_git(dir: &Path) -> io::Result<Option<Vec<WorktreeEntry>>> {
+    if !is_git_worktree_dir(dir)? {
+        return Ok(None);
+    }
+
+    let output = Command::new("git")
+        .current_dir(dir)
+        .args(["worktree", "list", "--porcelain"])
+        .output()?;
+    let stdout = command_stdout(output, "git worktree list --porcelain")?;
+    let entries = parse_worktree_entries(&stdout)?;
+    Ok(Some(entries))
+}
+
+/// Runs the configured worktree create command for `branch` from `cwd`, then returns the
+/// path to the newly created worktree by re-querying `git worktree list --porcelain`.
+pub fn run_worktree_create(command: &str, branch: &str, cwd: &Path) -> io::Result<PathBuf> {
+    let tokens: Vec<&str> = command.split_whitespace().collect();
+    if tokens.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "worktree_create_command is empty",
+        ));
+    }
+
+    let args: Vec<String> = tokens[1..]
+        .iter()
+        .map(|token| token.replace("{branch}", branch))
+        .collect();
+
+    let status = Command::new(tokens[0].replace("{branch}", branch))
+        .args(&args)
+        .current_dir(cwd)
+        .status()?;
+
+    if !status.success() {
+        return Err(io::Error::other(
+            format!("worktree create command exited with status {status}"),
+        ));
+    }
+
+    let output = Command::new("git")
+        .current_dir(cwd)
+        .args(["worktree", "list", "--porcelain"])
+        .output()?;
+    let stdout = command_stdout(output, "git worktree list --porcelain")?;
+    let entries = parse_worktree_entries(&stdout)?;
+
+    let matched = entries
+        .into_iter()
+        .find(|entry| entry.branch == branch);
+
+    match matched {
+        Some(entry) => Ok(PathBuf::from(entry.path)),
+        None => Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("worktree for branch {branch:?} not found after create command ran"),
+        )),
     }
 }
 

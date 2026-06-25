@@ -465,6 +465,12 @@ fn render_create_session(frame: &mut Frame, app: &App) {
     if app.create_candidates.is_empty() {
         let message = if app.create_tab == CreateTab::History {
             "no matches - type a name to create"
+        } else if app.create_tab == CreateTab::Worktree
+            && app.config.as_ref()
+                .and_then(|c| c.worktree_create_command.as_ref())
+                .is_some()
+        {
+            "type a branch name to create a new worktree"
         } else {
             "no matches"
         };

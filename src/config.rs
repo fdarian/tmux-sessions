@@ -8,6 +8,7 @@ pub struct Config {
     pub formatter: Option<String>,
     pub group_name_separator: Option<String>,
     pub zoxide: Option<bool>,
+    pub worktree_create_command: Option<String>,
 }
 
 pub fn load_config() -> io::Result<Option<Config>> {
