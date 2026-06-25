@@ -164,7 +164,7 @@ fn render_preview(frame: &mut Frame, app: &App, area: Rect) {
     let preview_area = if app.selecting {
         let marked_count = app.marked_windows.len();
         let hint = format!(
-            " {} selected · j/k extend · v done · M move · Esc clear ",
+            " {} selected · j/k extend · v done · M move · x delete · Esc clear ",
             marked_count
         );
         let chunks = Layout::default()
@@ -179,7 +179,7 @@ fn render_preview(frame: &mut Frame, app: &App, area: Rect) {
     } else if !app.marked_windows.is_empty() {
         let marked_count = app.marked_windows.len();
         let hint = format!(
-            " {} selected · M move · v reselect · Esc clear ",
+            " {} selected · M move · x delete · v reselect · Esc clear ",
             marked_count
         );
         let chunks = Layout::default()
@@ -260,17 +260,12 @@ fn render_preview(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn render_confirmation(frame: &mut Frame, app: &App) {
-    let label = app
-        .confirming_label()
-        .unwrap_or_else(|| "item".to_string());
-    let label = if label.len() > 24 {
-        format!("{}...", &label[..21])
-    } else {
-        label
+    let text = match app.confirming_message() {
+        Some(text) => text,
+        None => return,
     };
-    let text = format!("Kill {}?\n[enter] confirm  [esc] cancel", label);
 
-    let area = centered_rect(36, 6, frame.area());
+    let area = centered_rect(40, 6, frame.area());
     frame.render_widget(Clear, area);
 
     let popup = Paragraph::new(text)

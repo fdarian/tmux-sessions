@@ -83,7 +83,7 @@ cargo run
 | `Shift+H` | Hide / unhide selected session |
 | `.` | Reveal / collapse hidden sessions |
 | `Shift+K` / `Shift+J` | Move pinned session up / down (no-op if not pinned) |
-| `x` | Kill selected (with confirmation) |
+| `x` | Kill selected, or batch-delete the visual selection (with confirmation) |
 | `r` | Rename selected (session/window) |
 | `v` | Toggle visual selection mode (j/k extends the range) |
 | `M` | Move selected windows to a session |
