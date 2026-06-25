@@ -2,10 +2,12 @@ use std::collections::{HashMap, HashSet};
 use std::io;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use fuzzy_matcher::skim::SkimMatcherV2;
 use ratatui::style::{Color, Style};
 use ratatui::widgets::ListState;
 
 use crate::config;
+use crate::create::{self, CreateCandidate, CreateTab, CreateTarget, WorktreeEntry, ZoxideEntry};
 use crate::event::{Action, Mode};
 use crate::history::{self, HistoryEntry};
 use crate::procs::{self, ProcessRow};
@@ -204,6 +206,16 @@ pub struct App {
     pub move_candidates: Vec<MoveCandidate>,
     pub move_selected: usize,
     pub move_source_session_cwd: String,
+    pub create_query: String,
+    pub create_cursor: usize,
+    pub create_tab: CreateTab,
+    pub create_available_tabs: Vec<CreateTab>,
+    pub create_candidates: Vec<CreateCandidate>,
+    pub create_selected: usize,
+    pub create_worktrees: Vec<WorktreeEntry>,
+    pub create_zoxide_entries: Vec<ZoxideEntry>,
+    pub create_current_session_cwd: String,
+    pub create_load_error: Option<String>,
     pub dead_sessions: Vec<DeadSession>,
     pub monitor_rows: Vec<ProcessRow>,
     pub monitor_selected: usize,
@@ -220,6 +232,23 @@ fn current_unix_secs() -> io::Result<u64> {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("system clock error: {}", e)))
+}
+
+fn path_buf_to_string(path: std::path::PathBuf, label: &str) -> io::Result<String> {
+    path.into_os_string().into_string().map_err(|path| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("{label} is not valid UTF-8: {path:?}"),
+        )
+    })
+}
+
+fn create_match_result(
+    matcher: &SkimMatcherV2,
+    query: &str,
+    text: &str,
+) -> Option<(i64, Vec<usize>)> {
+    tree::fuzzy_match_multi(matcher, query, text)
 }
 
 fn compute_dead_sessions(
@@ -355,6 +384,16 @@ impl App {
             move_candidates: Vec::new(),
             move_selected: 0,
             move_source_session_cwd: String::new(),
+            create_query: String::new(),
+            create_cursor: 0,
+            create_tab: CreateTab::History,
+            create_available_tabs: Vec::new(),
+            create_candidates: Vec::new(),
+            create_selected: 0,
+            create_worktrees: Vec::new(),
+            create_zoxide_entries: Vec::new(),
+            create_current_session_cwd: String::new(),
+            create_load_error: None,
             dead_sessions,
             monitor_rows: Vec::new(),
             monitor_selected: 0,
@@ -489,6 +528,19 @@ impl App {
         self.marked_windows.as_slice()
     }
 
+    fn reset_create_state(&mut self) {
+        self.create_query = String::new();
+        self.create_cursor = 0;
+        self.create_tab = CreateTab::History;
+        self.create_available_tabs.clear();
+        self.create_candidates.clear();
+        self.create_selected = 0;
+        self.create_worktrees.clear();
+        self.create_zoxide_entries.clear();
+        self.create_current_session_cwd = String::new();
+        self.create_load_error = None;
+    }
+
     fn recompute_selection_range(&mut self) {
         let anchor = match self.selection_anchor {
             Some(anchor) => anchor,
@@ -590,6 +642,162 @@ impl App {
         } else if self.move_selected >= self.move_candidates.len() {
             self.move_selected = self.move_candidates.len() - 1;
         }
+    }
+
+    fn rebuild_create_candidates(&mut self) {
+        let matcher = SkimMatcherV2::default();
+        let mut candidates = Vec::new();
+
+        match self.create_tab {
+            CreateTab::History => {
+                let mut scored_dead_sessions: Vec<(i64, u64, usize, Vec<usize>)> = Vec::new();
+                for index in 0..self.dead_sessions.len() {
+                    let dead_session = &self.dead_sessions[index];
+                    if let Some((score, match_indices)) = create_match_result(
+                        &matcher,
+                        &self.create_query,
+                        &dead_session.display_name,
+                    ) {
+                        scored_dead_sessions.push((score, dead_session.last_seen, index, match_indices));
+                    }
+                }
+                scored_dead_sessions.sort_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)));
+
+                for entry in scored_dead_sessions.into_iter() {
+                    let dead_session = &self.dead_sessions[entry.2];
+                    let secondary = if dead_session.name != dead_session.display_name {
+                        Some(dead_session.name.clone())
+                    } else {
+                        None
+                    };
+                    candidates.push(CreateCandidate {
+                        primary: dead_session.display_name.clone(),
+                        secondary,
+                        match_indices: entry.3,
+                        frecency: None,
+                        target: CreateTarget::ResumeDead {
+                            name: dead_session.name.clone(),
+                            cwd: dead_session.cwd.clone(),
+                        },
+                    });
+                }
+
+                if !self.create_query.is_empty()
+                    && !self.dead_sessions.iter().any(|dead_session| dead_session.name == self.create_query)
+                {
+                    let primary = format!("+ Create new session \"{}\"", self.create_query);
+                    if let Some(create_match) = create_match_result(&matcher, &self.create_query, &primary) {
+                        candidates.push(CreateCandidate {
+                            primary,
+                            secondary: None,
+                            match_indices: create_match.1,
+                            frecency: None,
+                            target: CreateTarget::NewNamed {
+                                name: self.create_query.clone(),
+                                cwd: self.create_current_session_cwd.clone(),
+                            },
+                        });
+                    }
+                }
+            }
+            CreateTab::Worktree => {
+                let mut scored_worktrees: Vec<(i64, usize, Vec<usize>)> = Vec::new();
+                for index in 0..self.create_worktrees.len() {
+                    let worktree = &self.create_worktrees[index];
+                    if let Some((score, match_indices)) = create_match_result(
+                        &matcher,
+                        &self.create_query,
+                        &worktree.branch,
+                    ) {
+                        scored_worktrees.push((score, index, match_indices));
+                    }
+                }
+                if !self.create_query.is_empty() {
+                    scored_worktrees.sort_by_key(|entry| std::cmp::Reverse(entry.0));
+                }
+
+                for entry in scored_worktrees.into_iter() {
+                    let worktree = &self.create_worktrees[entry.1];
+                    candidates.push(CreateCandidate {
+                        primary: worktree.branch.clone(),
+                        secondary: Some(worktree.path.clone()),
+                        match_indices: entry.2,
+                        frecency: None,
+                        target: CreateTarget::PathDir {
+                            path: worktree.path.clone(),
+                        },
+                    });
+                }
+            }
+            CreateTab::Zoxide => {
+                let mut scored_paths: Vec<(i64, usize, Vec<usize>)> = Vec::new();
+                for index in 0..self.create_zoxide_entries.len() {
+                    let entry = &self.create_zoxide_entries[index];
+                    if let Some((score, match_indices)) = create_match_result(
+                        &matcher,
+                        &self.create_query,
+                        &entry.path,
+                    ) {
+                        scored_paths.push((score, index, match_indices));
+                    }
+                }
+                if !self.create_query.is_empty() {
+                    scored_paths.sort_by_key(|entry| std::cmp::Reverse(entry.0));
+                }
+
+                for entry in scored_paths.into_iter() {
+                    let zoxide_entry = &self.create_zoxide_entries[entry.1];
+                    candidates.push(CreateCandidate {
+                        primary: zoxide_entry.path.clone(),
+                        secondary: None,
+                        match_indices: entry.2,
+                        frecency: Some(zoxide_entry.frecency),
+                        target: CreateTarget::PathDir {
+                            path: zoxide_entry.path.clone(),
+                        },
+                    });
+                }
+            }
+        }
+
+        self.create_candidates = candidates;
+        self.create_selected = 0;
+    }
+
+    pub fn create_total_count(&self) -> usize {
+        match self.create_tab {
+            CreateTab::History => {
+                let mut total = self.dead_sessions.len();
+                if !self.create_query.is_empty()
+                    && !self.dead_sessions.iter().any(|dead_session| dead_session.name == self.create_query)
+                {
+                    total += 1;
+                }
+                total
+            }
+            CreateTab::Worktree => self.create_worktrees.len(),
+            CreateTab::Zoxide => self.create_zoxide_entries.len(),
+        }
+    }
+
+    fn cycle_create_tab(&mut self, forward: bool) {
+        if self.create_available_tabs.is_empty() {
+            return;
+        }
+
+        let current_index = match self.create_available_tabs.iter().position(|tab| *tab == self.create_tab) {
+            Some(index) => index,
+            None => return,
+        };
+        let next_index = if forward {
+            (current_index + 1) % self.create_available_tabs.len()
+        } else if current_index == 0 {
+            self.create_available_tabs.len() - 1
+        } else {
+            current_index - 1
+        };
+        self.create_tab = self.create_available_tabs[next_index];
+        self.rebuild_create_candidates();
     }
 
     pub fn update_preview(&mut self) {
@@ -1171,6 +1379,56 @@ impl App {
                 self.rebuild_move_candidates();
                 self.mode = Mode::MoveWindow;
             }
+            Action::EnterCreate => {
+                let current_dir = match std::env::current_dir() {
+                    Ok(dir) => dir,
+                    Err(_) => return,
+                };
+
+                self.reset_create_state();
+                self.create_available_tabs.push(CreateTab::History);
+
+                let mut load_errors: Vec<String> = Vec::new();
+
+                match create::list_linked_worktree_paths(&current_dir) {
+                    Ok(Some(worktrees)) => {
+                        self.create_worktrees = worktrees;
+                        self.create_available_tabs.push(CreateTab::Worktree);
+                    }
+                    Ok(None) => {}
+                    Err(e) => {
+                        load_errors.push(format!("worktree: {e}"));
+                    }
+                }
+
+                let zoxide_enabled = self.config.as_ref()
+                    .and_then(|config| config.zoxide)
+                    .unwrap_or_default();
+                if zoxide_enabled {
+                    match create::list_zoxide_dirs() {
+                        Ok(Some(entries)) => {
+                            self.create_zoxide_entries = entries;
+                            self.create_available_tabs.push(CreateTab::Zoxide);
+                        }
+                        Ok(None) => {}
+                        Err(e) => {
+                            load_errors.push(format!("zoxide: {e}"));
+                        }
+                    }
+                }
+
+                if !load_errors.is_empty() {
+                    self.create_load_error = Some(load_errors.join("  "));
+                }
+
+                self.create_current_session_cwd = match path_buf_to_string(current_dir, "current directory") {
+                    Ok(path) => path,
+                    Err(_) => return,
+                };
+                self.create_tab = self.create_available_tabs[0];
+                self.rebuild_create_candidates();
+                self.mode = Mode::CreateSession;
+            }
             Action::FilterChar(c) => {
                 let byte_offset = self.filter_query.char_indices()
                     .nth(self.filter_cursor)
@@ -1530,6 +1788,171 @@ impl App {
                 self.reset_move_window_state();
                 self.mode = Mode::Normal;
             }
+            Action::CreateChar(c) => {
+                let byte_offset = self.create_query.char_indices()
+                    .nth(self.create_cursor)
+                    .map(|(i, _)| i)
+                    .unwrap_or(self.create_query.len());
+                self.create_query.insert(byte_offset, c);
+                self.create_cursor += 1;
+                self.rebuild_create_candidates();
+            }
+            Action::CreateBackspace => {
+                if self.create_cursor > 0 {
+                    let byte_before = self.create_query.char_indices()
+                        .nth(self.create_cursor - 1)
+                        .map(|(i, _)| i)
+                        .unwrap_or(self.create_query.len());
+                    let byte_at = self.create_query.char_indices()
+                        .nth(self.create_cursor)
+                        .map(|(i, _)| i)
+                        .unwrap_or(self.create_query.len());
+                    self.create_query.drain(byte_before..byte_at);
+                    self.create_cursor -= 1;
+                    self.rebuild_create_candidates();
+                }
+            }
+            Action::CreateDeleteForward => {
+                let len = self.create_query.chars().count();
+                if self.create_cursor < len {
+                    let byte_at = self.create_query.char_indices()
+                        .nth(self.create_cursor)
+                        .map(|(i, _)| i)
+                        .unwrap_or(self.create_query.len());
+                    let byte_next = self.create_query.char_indices()
+                        .nth(self.create_cursor + 1)
+                        .map(|(i, _)| i)
+                        .unwrap_or(self.create_query.len());
+                    self.create_query.drain(byte_at..byte_next);
+                    self.rebuild_create_candidates();
+                }
+            }
+            Action::CreateKillWord => {
+                let chars: Vec<char> = self.create_query.chars().collect();
+                let mut pos = self.create_cursor;
+                while pos > 0 && chars[pos - 1].is_whitespace() {
+                    pos -= 1;
+                }
+                while pos > 0 && !chars[pos - 1].is_whitespace() {
+                    pos -= 1;
+                }
+                let start_byte = self.create_query.char_indices()
+                    .nth(pos)
+                    .map(|(i, _)| i)
+                    .unwrap_or(self.create_query.len());
+                let end_byte = self.create_query.char_indices()
+                    .nth(self.create_cursor)
+                    .map(|(i, _)| i)
+                    .unwrap_or(self.create_query.len());
+                self.create_query.drain(start_byte..end_byte);
+                self.create_cursor = pos;
+                self.rebuild_create_candidates();
+            }
+            Action::CreateKillLine => {
+                let byte_offset = self.create_query.char_indices()
+                    .nth(self.create_cursor)
+                    .map(|(i, _)| i)
+                    .unwrap_or(self.create_query.len());
+                self.create_query.drain(..byte_offset);
+                self.create_cursor = 0;
+                self.rebuild_create_candidates();
+            }
+            Action::CreateKillLineForward => {
+                let byte_offset = self.create_query.char_indices()
+                    .nth(self.create_cursor)
+                    .map(|(i, _)| i)
+                    .unwrap_or(self.create_query.len());
+                self.create_query.truncate(byte_offset);
+                self.rebuild_create_candidates();
+            }
+            Action::CreateCursorLeft => {
+                if self.create_cursor > 0 {
+                    self.create_cursor -= 1;
+                }
+            }
+            Action::CreateCursorRight => {
+                let len = self.create_query.chars().count();
+                if self.create_cursor < len {
+                    self.create_cursor += 1;
+                }
+            }
+            Action::CreateCursorWordLeft => {
+                let chars: Vec<char> = self.create_query.chars().collect();
+                let mut pos = self.create_cursor;
+                while pos > 0 && chars[pos - 1].is_whitespace() {
+                    pos -= 1;
+                }
+                while pos > 0 && !chars[pos - 1].is_whitespace() {
+                    pos -= 1;
+                }
+                self.create_cursor = pos;
+            }
+            Action::CreateCursorWordRight => {
+                let chars: Vec<char> = self.create_query.chars().collect();
+                let len = chars.len();
+                let mut pos = self.create_cursor;
+                while pos < len && !chars[pos].is_whitespace() {
+                    pos += 1;
+                }
+                while pos < len && chars[pos].is_whitespace() {
+                    pos += 1;
+                }
+                self.create_cursor = pos;
+            }
+            Action::CreateCursorStart => {
+                self.create_cursor = 0;
+            }
+            Action::CreateCursorEnd => {
+                self.create_cursor = self.create_query.chars().count();
+            }
+            Action::CreateNext => {
+                if self.create_selected + 1 < self.create_candidates.len() {
+                    self.create_selected += 1;
+                }
+            }
+            Action::CreatePrev => {
+                if self.create_selected > 0 {
+                    self.create_selected -= 1;
+                }
+            }
+            Action::CreateTabNext => {
+                self.cycle_create_tab(true);
+            }
+            Action::CreateTabPrev => {
+                self.cycle_create_tab(false);
+            }
+            Action::ConfirmCreate => {
+                let candidate = match self.create_candidates.get(self.create_selected).cloned() {
+                    Some(candidate) => candidate,
+                    None => return,
+                };
+
+                let (name, cwd) = match candidate.target {
+                    CreateTarget::ResumeDead { name, cwd } => (name, cwd),
+                    CreateTarget::NewNamed { name, cwd } => (name, cwd),
+                    CreateTarget::PathDir { path } => (path.clone(), path),
+                };
+
+                let live_session_name = self.sessions.iter()
+                    .find(|session| session.name == name)
+                    .map(|session| session.name.clone());
+                let result = match live_session_name {
+                    Some(name) => tmux::switch_client(&name),
+                    None => tmux::new_session_with_actual_name(&name, &cwd)
+                        .and_then(|created_name| tmux::switch_client(&created_name)),
+                };
+
+                if result.is_ok() {
+                    self.should_quit = true;
+                } else {
+                    self.reset_create_state();
+                    self.mode = Mode::Normal;
+                }
+            }
+            Action::CancelCreate => {
+                self.reset_create_state();
+                self.mode = Mode::Normal;
+            }
             Action::SelectIndex(i) => {
                 if i < self.flat_entries.len() {
                     self.list_state.select(Some(i));
@@ -1826,8 +2249,8 @@ impl App {
                     Some(d) => d.cwd.clone(),
                     None => return,
                 };
-                tmux::new_session(name, &cwd)
-                    .and_then(|_| tmux::switch_client(name))
+                tmux::new_session_with_actual_name(name, &cwd)
+                    .and_then(|created_name| tmux::switch_client(&created_name))
             }
         };
 

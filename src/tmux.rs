@@ -127,6 +127,39 @@ pub fn new_session(name: &str, cwd: &str) -> io::Result<CreatedSession> {
     })
 }
 
+pub fn new_session_with_actual_name(name: &str, cwd: &str) -> io::Result<String> {
+    let output = Command::new("tmux")
+        .args(["new-session", "-d", "-P", "-F", "#{session_name}", "-s", name, "-c", cwd])
+        .output()?;
+    if !output.status.success() {
+        return Err(io::Error::other(
+            format!(
+                "tmux {:?} exited with status {}",
+                ["new-session", "-d", "-P", "-F", "#{session_name}", "-s", name, "-c", cwd],
+                output.status
+            ),
+        ));
+    }
+
+    let mut session_name = String::from_utf8(output.stdout).map_err(|err| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("tmux new-session returned invalid UTF-8: {err}"),
+        )
+    })?;
+    while session_name.ends_with('\n') || session_name.ends_with('\r') {
+        session_name.pop();
+    }
+    if session_name.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "tmux new-session returned an empty session name",
+        ));
+    }
+
+    Ok(session_name)
+}
+
 pub fn list_windows() -> io::Result<Vec<Window>> {
     let format = "#{session_id}\x1f#{window_id}\x1f#{window_index}\x1f#{window_name}\x1f#{window_active}\x1f#{pane_title}\x1f#{window_flags}";
     let output = run_tmux_output(&["list-windows", "-a", "-F", format])?;
