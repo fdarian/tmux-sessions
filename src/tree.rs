@@ -384,6 +384,35 @@ pub struct DeadSessionRef<'a> {
     pub last_seen: u64,
 }
 
+/// Multi-term fuzzy match: splits `query` on whitespace and requires every term
+/// to fuzzy-match `text`. Returns `Some((total_score, union_of_indices))` when
+/// all terms match, `None` if any term misses. An empty query always matches
+/// with score 0 and no indices.
+pub fn fuzzy_match_multi(
+    matcher: &fuzzy_matcher::skim::SkimMatcherV2,
+    query: &str,
+    text: &str,
+) -> Option<(i64, Vec<usize>)> {
+    let terms: Vec<&str> = query.split_whitespace().collect();
+    if terms.is_empty() {
+        return Some((0, Vec::new()));
+    }
+
+    let mut total_score = 0i64;
+    let mut match_indices: Vec<usize> = Vec::new();
+
+    for term in terms {
+        let (score, indices) = matcher.fuzzy_indices(text, term)?;
+        total_score += score;
+        match_indices.extend(indices);
+    }
+
+    match_indices.sort_unstable();
+    match_indices.dedup();
+
+    Some((total_score, match_indices))
+}
+
 pub fn flatten_filtered(
     sessions: &[tmux::Session],
     windows: &[tmux::Window],
@@ -395,7 +424,7 @@ pub fn flatten_filtered(
 
     for session in sessions.iter() {
         let text = session_text(session);
-        if let Some(score) = matcher.fuzzy_match(&text, query) {
+        if let Some((score, _)) = fuzzy_match_multi(&matcher, query, &text) {
             let has_children = windows.iter().any(|w| w.session_id == session.id);
             scored.push((score, FlatEntry {
                 node_id: NodeId::Session(session.id.clone()),
@@ -414,7 +443,7 @@ pub fn flatten_filtered(
     let mut dead_scored: Vec<(i64, u64, FlatEntry)> = Vec::new();
     for dead in dead_sessions.iter() {
         let text = format!("{}: (dead)", dead.display_name);
-        if let Some(score) = matcher.fuzzy_match(&text, query) {
+        if let Some((score, _)) = fuzzy_match_multi(&matcher, query, &text) {
             dead_scored.push((score, dead.last_seen, FlatEntry {
                 node_id: NodeId::DeadSession(dead.name.to_string()),
                 depth: 0,

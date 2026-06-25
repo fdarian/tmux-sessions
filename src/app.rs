@@ -2,7 +2,6 @@ use std::collections::{HashMap, HashSet};
 use std::io;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use fuzzy_matcher::FuzzyMatcher;
 use fuzzy_matcher::skim::SkimMatcherV2;
 use ratatui::style::{Color, Style};
 use ratatui::widgets::ListState;
@@ -248,26 +247,7 @@ fn create_match_result(
     query: &str,
     text: &str,
 ) -> Option<(i64, Vec<usize>)> {
-    let terms: Vec<&str> = query.split_whitespace().collect();
-    if terms.is_empty() {
-        return Some((0, Vec::new()));
-    }
-
-    let mut total_score = 0i64;
-    let mut match_indices = Vec::new();
-
-    for term in terms {
-        let term_match = matcher.fuzzy_indices(text, term)?;
-        total_score += term_match.0;
-        for index in term_match.1 {
-            match_indices.push(index);
-        }
-    }
-
-    match_indices.sort_unstable();
-    match_indices.dedup();
-
-    Some((total_score, match_indices))
+    tree::fuzzy_match_multi(matcher, query, text)
 }
 
 fn compute_dead_sessions(
