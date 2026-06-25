@@ -8,9 +8,9 @@ A Rust TUI reimplementation of tmux's `choose-tree` — a tree-based session/win
 
 ```
 src/
-  main.rs    — entry point, terminal setup/teardown, event loop
+  main.rs    — entry point, terminal setup/teardown, unified AppEvent loop, 3 worker threads
   app.rs     — App state, Mode, handle_action (TEA update), PreviewPane struct
-  config.rs  — optional config loading (~/.config/tmux-sessions/config.json), session name formatter
+  config.rs  — optional config loading (~/.config/tmux-sessions/config.json), format_session_name
   tmux.rs    — all tmux command interaction (list/kill/switch/capture); move_window, capture_pane_raw, get_mode_style, parse_style functions
   tree.rs    — NodeId enum, FlatEntry struct, flatten/format_line for tree rendering
   history.rs — recently-closed session history (~/.config/tmux-sessions/history.json): load/prune, upsert live sessions
@@ -18,6 +18,26 @@ src/
   event.rs   — map KeyEvent + Mode → Action enum
   procs.rs   — process monitor: pane enumeration, ps parsing, subtree ownership
 ```
+
+### Threading / event model
+
+`main.rs` owns a single `mpsc::Receiver<AppEvent>` and three worker threads:
+
+- **Input thread**: polls crossterm events → sends `AppEvent::Input`
+- **Capture worker**: receives `CaptureRequest`, runs `tmux capture-pane` (blocking, off UI thread) → sends `AppEvent::CaptureDone { generation, node_id, panes }`
+- **Formatter worker**: receives `FormatRequest`, runs the configured formatter script → sends `AppEvent::NameFormatted { raw_name, formatted }`
+
+The main loop blocks on `recv` (or `recv_timeout` when Monitor mode or debounce is pending). On timeout: dispatch the debounced capture request and/or tick the monitor.
+
+### Preview caching and debounce
+
+`update_preview()` sets `pending_preview_request` with a 40ms deadline (not immediate). `dispatch_capture_request` only sends to the worker when `Instant::now() >= deadline`. This debounces `j`/`k` scrolling to ~one capture when the cursor settles.
+
+`preview_cache: HashMap<NodeId, Vec<PreviewPane>>` stores the last successful capture per node. On selection change: show cached content immediately (SWR), kick a background refresh. Show "capturing..." only when no cache entry exists.
+
+### Formatter caching (SWR)
+
+Sessions start with raw names. `formatter_cache: HashMap<String, String>` is in-memory only. On startup and after refresh, uncached live sessions are enqueued to the formatter worker. Dead sessions are formatted lazily when the filter (`/`) is active. `apply_name_formatted()` updates `display_name` for matching live and dead sessions and rebuilds flat_entries.
 
 ## Key Conventions
 

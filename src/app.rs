@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::io;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use ratatui::style::{Color, Style};
 use ratatui::widgets::ListState;
@@ -11,6 +11,8 @@ use crate::history::{self, HistoryEntry};
 use crate::procs::{self, ProcessRow};
 use crate::tmux;
 use crate::tree::{self, DeadSessionRef, FlatEntry, NodeId};
+
+const PREVIEW_DEBOUNCE: Duration = Duration::from_millis(40);
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum MonitorSort {
@@ -98,10 +100,28 @@ fn save_hidden(hidden: &[String]) {
     }
 }
 
+#[derive(Clone)]
 pub struct PreviewPane {
     pub label: String,
     pub content: Vec<u8>,
     pub is_active: bool,
+}
+
+pub struct CapturePaneTarget {
+    pub label: String,
+    pub pane_id: Option<String>,
+    pub is_active: bool,
+}
+
+pub struct CaptureRequest {
+    pub generation: u64,
+    pub node_id: NodeId,
+    pub panes: Vec<CapturePaneTarget>,
+}
+
+struct PendingCaptureRequest {
+    pub deadline: Instant,
+    pub request: CaptureRequest,
 }
 
 pub struct PreviewFullPane {
@@ -159,8 +179,10 @@ pub struct App {
     pub list_state: ListState,
     pub preview_panes: Vec<PreviewPane>,
     pub preview_title: String,
+    pub preview_notice: Option<String>,
     pub preview_full_panes: Vec<PreviewFullPane>,
     pub preview_full_index: usize,
+    pub preview_generation: u64,
     pub mode: Mode,
     pub confirming_kill_target: Option<ConfirmKillTarget>,
     pub should_quit: bool,
@@ -188,6 +210,9 @@ pub struct App {
     pub monitor_sort: MonitorSort,
     pub monitor_list_state: ListState,
     pub confirming_process: Option<(u32, String)>,
+    pending_preview_request: Option<PendingCaptureRequest>,
+    pub preview_cache: HashMap<NodeId, Vec<PreviewPane>>,
+    pub formatter_cache: HashMap<String, String>,
 }
 
 fn current_unix_secs() -> io::Result<u64> {
@@ -200,15 +225,17 @@ fn current_unix_secs() -> io::Result<u64> {
 fn compute_dead_sessions(
     history: &[HistoryEntry],
     live_sessions: &[tmux::Session],
-    config: &Option<config::Config>,
+    formatter_cache: &HashMap<String, String>,
 ) -> Vec<DeadSession> {
     let live_names: HashSet<&str> = live_sessions.iter().map(|s| s.name.as_str()).collect();
     history
         .iter()
         .filter(|e| !live_names.contains(e.name.as_str()))
         .map(|e| {
-            let mut display_name = e.name.clone();
-            config::apply_formatter_to_name(&mut display_name, config);
+            let display_name = formatter_cache
+                .get(&e.name)
+                .cloned()
+                .unwrap_or_else(|| e.name.clone());
             DeadSession {
                 name: e.name.clone(),
                 display_name,
@@ -243,7 +270,6 @@ impl App {
         let config = config::load_config()?;
         let current_session_id = tmux::get_current_session_id()?;
         let mut sessions = tmux::list_sessions(&current_session_id)?;
-        config::apply_formatter_to_sessions(&mut sessions, &config);
         sessions.sort_by(|a, b| b.activity.cmp(&a.activity));
         let windows = tmux::list_windows()?;
         let panes = tmux::list_panes()?;
@@ -251,7 +277,7 @@ impl App {
         let mut history_entries = history::load_history();
         let now = current_unix_secs()?;
         history::upsert_live_sessions(&mut history_entries, &sessions, now);
-        let dead_sessions = compute_dead_sessions(&history_entries, &sessions, &config);
+        let dead_sessions = compute_dead_sessions(&history_entries, &sessions, &HashMap::new());
 
         let pinned = load_pins();
         let hidden = load_hidden();
@@ -304,8 +330,10 @@ impl App {
             list_state,
             preview_panes: Vec::new(),
             preview_title: String::new(),
+            preview_notice: None,
             preview_full_panes: Vec::new(),
             preview_full_index: 0,
+            preview_generation: 0,
             mode: Mode::Normal,
             confirming_kill_target: None,
             should_quit: false,
@@ -333,6 +361,9 @@ impl App {
             monitor_sort: MonitorSort::Mem,
             monitor_list_state: ListState::default(),
             confirming_process: None,
+            pending_preview_request: None,
+            preview_cache: HashMap::new(),
+            formatter_cache: HashMap::new(),
         };
         app.update_preview();
         Ok(app)
@@ -393,7 +424,12 @@ impl App {
         let prev_index = self.list_state.selected().unwrap_or(0);
 
         self.sessions = tmux::list_sessions(&self.current_session_id)?;
-        config::apply_formatter_to_sessions(&mut self.sessions, &self.config);
+        // Apply cached formatted names
+        for session in self.sessions.iter_mut() {
+            if let Some(formatted) = self.formatter_cache.get(&session.name) {
+                session.display_name = formatted.clone();
+            }
+        }
         self.sessions.sort_by(|a, b| b.activity.cmp(&a.activity));
         self.windows = tmux::list_windows()?;
         self.panes = tmux::list_panes()?;
@@ -406,7 +442,7 @@ impl App {
         let mut history_entries = history::load_history();
         let now = current_unix_secs()?;
         history::upsert_live_sessions(&mut history_entries, &self.sessions, now);
-        self.dead_sessions = compute_dead_sessions(&history_entries, &self.sessions, &self.config);
+        self.dead_sessions = compute_dead_sessions(&history_entries, &self.sessions, &self.formatter_cache);
 
         let group_sep = self.config.as_ref().and_then(|c| c.group_name_separator.as_deref());
         for prefix in extract_group_prefixes(&self.sessions, group_sep) {
@@ -557,88 +593,172 @@ impl App {
     }
 
     pub fn update_preview(&mut self) {
-        let i = match self.list_state.selected() {
-            Some(i) if i < self.flat_entries.len() => i,
+        self.preview_generation = self.preview_generation.wrapping_add(1);
+
+        let selected_index = match self.list_state.selected() {
+            Some(selected_index) if selected_index < self.flat_entries.len() => selected_index,
             _ => {
+                self.pending_preview_request = None;
+                self.preview_notice = None;
                 self.preview_panes.clear();
                 self.preview_title.clear();
                 return;
             }
         };
 
-        let node_id = &self.flat_entries[i].node_id;
-        match node_id {
-            NodeId::Separator | NodeId::DeadSession(_) | NodeId::Group(_) => {
+        let node_id = self.flat_entries[selected_index].node_id.clone();
+        self.preview_title = self.preview_title_for_node(&node_id, selected_index);
+
+        let panes = match self.capture_targets_for_node(&node_id) {
+            Some(panes) => panes,
+            None => {
+                self.pending_preview_request = None;
+                self.preview_notice = None;
                 self.preview_panes.clear();
-                self.preview_title.clear();
+                return;
             }
-            NodeId::Session(session_id) => {
-                let session_name = self.sessions.iter()
-                    .find(|s| s.id == *session_id)
-                    .map(|s| s.display_name.clone())
-                    .unwrap_or_else(|| session_id.clone());
-                self.preview_title = session_name;
+        };
 
-                let session_windows: Vec<&tmux::Window> = self.windows.iter()
-                    .filter(|w| w.session_id == *session_id)
-                    .collect();
+        if let Some(cached) = self.preview_cache.get(&node_id) {
+            self.preview_panes = cached.clone();
+            self.preview_notice = None;
+        } else {
+            self.preview_panes.clear();
+            self.preview_notice = Some("capturing...".to_string());
+        }
+        self.pending_preview_request = Some(PendingCaptureRequest {
+            deadline: Instant::now() + PREVIEW_DEBOUNCE,
+            request: CaptureRequest {
+                generation: self.preview_generation,
+                node_id,
+                panes,
+            },
+        });
+    }
 
-                self.preview_panes = session_windows.iter().map(|window| {
-                    let pane_id = self.panes.iter()
-                        .find(|p| p.session_id == *session_id && p.window_id == window.id && p.active)
-                        .or_else(|| self.panes.iter().find(|p| p.session_id == *session_id && p.window_id == window.id))
-                        .map(|p| p.id.clone());
+    pub fn pending_capture_deadline(&self) -> Option<Instant> {
+        self.pending_preview_request.as_ref().map(|p| p.deadline)
+    }
 
-                    let content = match pane_id {
-                        Some(id) => tmux::capture_pane_raw(&id).unwrap_or_default(),
-                        None => Vec::new(),
-                    };
+    pub fn take_pending_capture_request(&mut self) -> Option<CaptureRequest> {
+        self.pending_preview_request.take().map(|p| p.request)
+    }
 
-                    PreviewPane {
-                        label: format!("{}:{}", window.index, window.name),
-                        content,
-                        is_active: window.active,
-                    }
-                }).collect();
+    pub fn apply_capture_result(
+        &mut self,
+        generation: u64,
+        node_id: NodeId,
+        panes: Result<Vec<PreviewPane>, String>,
+    ) {
+        if generation != self.preview_generation {
+            return;
+        }
+
+        match panes {
+            Ok(panes) => {
+                self.preview_cache.insert(node_id, panes.clone());
+                self.preview_panes = panes;
+                self.preview_notice = None;
             }
-            NodeId::Window(session_id, window_id) => {
-                let window = self.windows.iter().find(|w| w.id == *window_id);
-                self.preview_title = format!(" {} (sort: index) ", i);
-
-                let pane_id = self.panes.iter()
-                    .find(|p| p.session_id == *session_id && p.window_id == *window_id && p.active)
-                    .or_else(|| self.panes.iter().find(|p| p.session_id == *session_id && p.window_id == *window_id))
-                    .map(|p| p.id.clone());
-
-                let content = match pane_id {
-                    Some(id) => tmux::capture_pane_raw(&id).unwrap_or_default(),
-                    None => Vec::new(),
-                };
-
-                let label = window.map(|w| format!("{}:{}", w.index, w.name))
-                    .unwrap_or_else(|| format!("{}", i));
-
-                self.preview_panes = vec![PreviewPane {
-                    label,
-                    content,
-                    is_active: true,
-                }];
-            }
-            NodeId::Pane(_session_id, _window_id, pane_id) => {
-                self.preview_title = format!(" {} (sort: index) ", i);
-
-                let content = tmux::capture_pane_raw(pane_id).unwrap_or_default();
-                let pane = self.panes.iter().find(|p| p.id == *pane_id);
-                let label = pane.map(|p| format!("{}:{}", p.index, p.current_command))
-                    .unwrap_or_else(|| format!("{}", i));
-
-                self.preview_panes = vec![PreviewPane {
-                    label,
-                    content,
-                    is_active: true,
-                }];
+            Err(error) => {
+                self.preview_panes.clear();
+                self.preview_notice = Some(format!("capture failed: {}", error));
             }
         }
+    }
+
+    pub fn uncached_dead_session_names(&self) -> Vec<String> {
+        self.dead_sessions
+            .iter()
+            .filter(|d| !self.formatter_cache.contains_key(&d.name))
+            .map(|d| d.name.clone())
+            .collect()
+    }
+
+    pub fn apply_name_formatted(&mut self, raw_name: String, formatted: String) {
+        self.formatter_cache.insert(raw_name.clone(), formatted.clone());
+        for session in self.sessions.iter_mut() {
+            if session.name == raw_name {
+                session.display_name = formatted.clone();
+            }
+        }
+        for dead in self.dead_sessions.iter_mut() {
+            if dead.name == raw_name {
+                dead.display_name = formatted.clone();
+            }
+        }
+        let group_sep = self.config.as_ref().and_then(|c| c.group_name_separator.as_deref());
+        for prefix in extract_group_prefixes(&self.sessions, group_sep) {
+            if !self.seen_groups.contains(&prefix) {
+                self.opened.insert(NodeId::Group(prefix.clone()));
+                self.seen_groups.insert(prefix);
+            }
+        }
+        self.rebuild_flat_entries();
+    }
+
+    fn preview_title_for_node(&self, node_id: &NodeId, selected_index: usize) -> String {
+        match node_id {
+            NodeId::Separator | NodeId::DeadSession(_) | NodeId::Group(_) => String::new(),
+            NodeId::Session(session_id) => {
+                let session = self.sessions.iter().find(|session| session.id == *session_id);
+                match session {
+                    Some(session) => session.display_name.clone(),
+                    None => String::new(),
+                }
+            }
+            NodeId::Window(_, _) | NodeId::Pane(_, _, _) => {
+                format!(" {} (sort: index) ", selected_index)
+            }
+        }
+    }
+
+    fn capture_targets_for_node(&self, node_id: &NodeId) -> Option<Vec<CapturePaneTarget>> {
+        match node_id {
+            NodeId::Separator | NodeId::DeadSession(_) | NodeId::Group(_) => None,
+            NodeId::Session(session_id) => {
+                let mut panes = Vec::new();
+                for window in self.windows.iter().filter(|window| window.session_id == *session_id) {
+                    panes.push(CapturePaneTarget {
+                        label: format!("{}:{}", window.index, window.name),
+                        pane_id: self.active_or_first_pane_id(session_id, &window.id),
+                        is_active: window.active,
+                    });
+                }
+                Some(panes)
+            }
+            NodeId::Window(session_id, window_id) => {
+                let window = self.windows.iter().find(|window| window.id == *window_id)?;
+                Some(vec![CapturePaneTarget {
+                    label: format!("{}:{}", window.index, window.name),
+                    pane_id: self.active_or_first_pane_id(session_id, window_id),
+                    is_active: true,
+                }])
+            }
+            NodeId::Pane(_, _, pane_id) => {
+                let pane = self.panes.iter().find(|pane| pane.id == *pane_id)?;
+                Some(vec![CapturePaneTarget {
+                    label: format!("{}:{}", pane.index, pane.current_command),
+                    pane_id: Some(pane.id.clone()),
+                    is_active: true,
+                }])
+            }
+        }
+    }
+
+    fn active_or_first_pane_id(&self, session_id: &str, window_id: &str) -> Option<String> {
+        let active_pane = self.panes.iter().find(|pane| {
+            pane.session_id == session_id && pane.window_id == window_id && pane.active
+        });
+        if let Some(active_pane) = active_pane {
+            return Some(active_pane.id.clone());
+        }
+
+        let first_pane = self
+            .panes
+            .iter()
+            .find(|pane| pane.session_id == session_id && pane.window_id == window_id)?;
+        Some(first_pane.id.clone())
     }
 
     fn build_full_preview(&self) -> (Vec<PreviewFullPane>, usize) {

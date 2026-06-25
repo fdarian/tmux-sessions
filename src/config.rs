@@ -3,8 +3,6 @@ use std::process::Command;
 
 use serde::Deserialize;
 
-use crate::tmux;
-
 #[derive(Deserialize)]
 pub struct Config {
     pub formatter: Option<String>,
@@ -33,7 +31,7 @@ pub fn load_config() -> io::Result<Option<Config>> {
     Ok(Some(config))
 }
 
-fn format_session_name(formatter: &str, raw_name: &str) -> io::Result<String> {
+pub fn format_session_name(formatter: &str, raw_name: &str) -> io::Result<String> {
     let parts: Vec<&str> = formatter.split_whitespace().collect();
     let output = Command::new(parts[0]).args(&parts[1..]).arg(raw_name).output()?;
     if !output.status.success() {
@@ -52,25 +50,3 @@ fn format_session_name(formatter: &str, raw_name: &str) -> io::Result<String> {
     Ok(formatted)
 }
 
-pub fn apply_formatter_to_sessions(sessions: &mut [tmux::Session], config: &Option<Config>) {
-    let formatter = match config.as_ref().and_then(|c| c.formatter.as_deref()) {
-        Some(f) => f,
-        None => return,
-    };
-
-    for session in sessions.iter_mut() {
-        if let Ok(formatted) = format_session_name(formatter, &session.name) {
-            session.display_name = formatted;
-        }
-    }
-}
-
-pub fn apply_formatter_to_name(name: &mut String, config: &Option<Config>) {
-    let formatter = match config.as_ref().and_then(|c| c.formatter.as_deref()) {
-        Some(f) => f,
-        None => return,
-    };
-    if let Ok(formatted) = format_session_name(formatter, name) {
-        *name = formatted;
-    }
-}
