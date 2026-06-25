@@ -157,30 +157,25 @@ fn parse_zoxide_entries(stdout: &str) -> io::Result<Vec<ZoxideEntry>> {
     let mut entries = Vec::new();
 
     for line in stdout.lines() {
-        let split_index = match line.find(char::is_whitespace) {
-            Some(split_index) => split_index,
-            None => {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("zoxide query -l -s returned malformed line: {line:?}"),
-                ));
-            }
-        };
-        let score_text = &line[..split_index];
-        let path = line[split_index..].trim_start();
-        if path.is_empty() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("zoxide query -l -s returned empty path: {line:?}"),
-            ));
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
         }
 
-        let frecency = score_text.parse::<f64>().map_err(|err| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("zoxide query -l -s returned invalid score {score_text:?}: {err}"),
-            )
-        })?;
+        let split_index = match trimmed.find(char::is_whitespace) {
+            Some(split_index) => split_index,
+            None => continue,
+        };
+        let score_text = &trimmed[..split_index];
+        let path = trimmed[split_index..].trim_start();
+        if path.is_empty() {
+            continue;
+        }
+
+        let frecency = match score_text.parse::<f64>() {
+            Ok(frecency) => frecency,
+            Err(_) => continue,
+        };
 
         entries.push(ZoxideEntry {
             path: path.to_string(),
