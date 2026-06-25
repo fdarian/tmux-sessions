@@ -11,6 +11,7 @@ src/
   main.rs    — entry point, terminal setup/teardown, unified AppEvent loop, 3 worker threads
   app.rs     — App state, Mode, handle_action (TEA update), PreviewPane struct
   config.rs  — optional config loading (~/.config/tmux-sessions/config.json), format_session_name
+  create.rs  — create-session popup sources: history/worktree/zoxide tabs and candidate types
   tmux.rs    — all tmux command interaction (list/kill/switch/capture); move_window, capture_pane_raw, get_mode_style, parse_style functions
   tree.rs    — NodeId enum, FlatEntry struct, flatten/format_line for tree rendering
   history.rs — recently-closed session history (~/.config/tmux-sessions/history.json): load/prune, upsert live sessions
@@ -56,12 +57,14 @@ Optional config file at `~/.config/tmux-sessions/config.json`:
 ```json
 {
   "formatter": "/path/to/format-session.sh",
-  "group_name_separator": "/"
+  "group_name_separator": "/",
+  "zoxide": true
 }
 ```
 
 - **formatter**: Path to a script that receives the raw session name as its first argument and prints the formatted name to stdout
 - **group_name_separator**: Groups sessions by the prefix before the first occurrence of this separator in their `display_name`. Sessions without the separator appear ungrouped at the root level. Groups start expanded and can be collapsed/expanded with `h`/`l`. Pinned sessions are pulled out of their group and shown at the top (with the same separator as in flat mode); group counts reflect only unpinned members.
+- **zoxide**: Enables the create-session popup's zoxide tab when set to `true` and the `zoxide` binary is installed
 - Missing config file → raw session names used (no error)
 - Invalid JSON → app fails to start with error
 - Formatter failure (missing script, non-zero exit, empty output) → per-session fallback to raw name
@@ -107,6 +110,7 @@ cargo run
 | `r` | Rename selected (session/window) |
 | `v` | Toggle visual selection mode (j/k extends the range) |
 | `M` | Move selected windows to a session |
+| `o` | Create/open a new session (history / worktree / zoxide) |
 | `R` | Refresh tree |
 | `m` | Open process monitor |
 | `q` | Quit |
@@ -117,6 +121,22 @@ In move-window mode:
 - `↓` / `Ctrl-N` — move down through candidates
 - `↑` / `Ctrl-P` — move up through candidates
 - `Enter` — confirm move (or create the target session, then move)
+- `Esc` — cancel
+
+## Create session
+
+Press `o` to open a create/resume popup with Tab / Shift+Tab cycling across the available sub-tabs:
+
+- **History** — always visible. Fuzzy-matches recently closed sessions and can resume them or create a new named session from the current query.
+- **Worktree** — visible only when the current working directory is inside a git repo with linked worktrees (`git worktree list --porcelain` returns more than one worktree).
+- **Zoxide** — visible only when `"zoxide": true` is set in `config.json` and `zoxide` is installed on `PATH`.
+
+In create-session mode:
+- type to search candidates or enter a new session name
+- `Tab` / `Shift+Tab` — cycle tabs
+- `↓` / `Ctrl-N` — move down through candidates
+- `↑` / `Ctrl-P` — move up through candidates
+- `Enter` — switch to an existing live session, resume a dead one, or create a new one
 - `Esc` — cancel
 
 In process monitor mode:

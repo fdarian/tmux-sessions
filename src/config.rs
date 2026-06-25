@@ -7,6 +7,7 @@ use serde::Deserialize;
 pub struct Config {
     pub formatter: Option<String>,
     pub group_name_separator: Option<String>,
+    pub zoxide: Option<bool>,
 }
 
 pub fn load_config() -> io::Result<Option<Config>> {
