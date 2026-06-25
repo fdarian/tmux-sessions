@@ -1994,7 +1994,7 @@ impl App {
                             return;
                         }
                     };
-                    let result = tmux::new_session_with_actual_name(&branch, &cwd_str)
+                    let result = tmux::new_session_with_actual_name(&cwd_str, &cwd_str)
                         .and_then(|created_name| tmux::switch_client(&created_name));
                     if result.is_ok() {
                         self.should_quit = true;
