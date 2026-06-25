@@ -728,6 +728,26 @@ impl App {
                         },
                     });
                 }
+
+                let worktree_create_command = self.config.as_ref()
+                    .and_then(|config| config.worktree_create_command.as_ref());
+                if worktree_create_command.is_some()
+                    && !self.create_query.is_empty()
+                    && !self.create_worktrees.iter().any(|w| w.branch == self.create_query)
+                {
+                    let primary = format!("+ Create worktree \"{}\"", self.create_query);
+                    let synthetic_match = create_match_result(&matcher, &self.create_query, &primary);
+                    let match_indices = synthetic_match.map(|m| m.1).unwrap_or_default();
+                    candidates.push(CreateCandidate {
+                        primary,
+                        secondary: None,
+                        match_indices,
+                        frecency: None,
+                        target: CreateTarget::NewWorktree {
+                            branch: self.create_query.clone(),
+                        },
+                    });
+                }
             }
             CreateTab::Zoxide => {
                 let mut scored_paths: Vec<(i64, usize, Vec<usize>)> = Vec::new();
@@ -775,7 +795,19 @@ impl App {
                 }
                 total
             }
-            CreateTab::Worktree => self.create_worktrees.len(),
+            CreateTab::Worktree => {
+                let mut total = self.create_worktrees.len();
+                let has_create_command = self.config.as_ref()
+                    .and_then(|config| config.worktree_create_command.as_ref())
+                    .is_some();
+                if has_create_command
+                    && !self.create_query.is_empty()
+                    && !self.create_worktrees.iter().any(|w| w.branch == self.create_query)
+                {
+                    total += 1;
+                }
+                total
+            }
             CreateTab::Zoxide => self.create_zoxide_entries.len(),
         }
     }
@@ -1390,7 +1422,14 @@ impl App {
 
                 let mut load_errors: Vec<String> = Vec::new();
 
-                match create::list_linked_worktree_paths(&current_dir) {
+                let worktree_create_command = self.config.as_ref()
+                    .and_then(|config| config.worktree_create_command.as_deref());
+                let worktree_result = if worktree_create_command.is_some() {
+                    create::list_worktrees_if_git(&current_dir)
+                } else {
+                    create::list_linked_worktree_paths(&current_dir)
+                };
+                match worktree_result {
                     Ok(Some(worktrees)) => {
                         self.create_worktrees = worktrees;
                         self.create_available_tabs.push(CreateTab::Worktree);
@@ -1927,10 +1966,50 @@ impl App {
                     None => return,
                 };
 
+                if let CreateTarget::NewWorktree { branch } = candidate.target {
+                    let command = match self.config.as_ref()
+                        .and_then(|config| config.worktree_create_command.as_deref())
+                    {
+                        Some(cmd) => cmd.to_string(),
+                        None => {
+                            self.reset_create_state();
+                            self.mode = Mode::Normal;
+                            return;
+                        }
+                    };
+                    let cwd = std::path::Path::new(&self.create_current_session_cwd);
+                    let worktree_path = match create::run_worktree_create(&command, &branch, cwd) {
+                        Ok(path) => path,
+                        Err(_) => {
+                            self.reset_create_state();
+                            self.mode = Mode::Normal;
+                            return;
+                        }
+                    };
+                    let cwd_str = match worktree_path.into_os_string().into_string() {
+                        Ok(s) => s,
+                        Err(_) => {
+                            self.reset_create_state();
+                            self.mode = Mode::Normal;
+                            return;
+                        }
+                    };
+                    let result = tmux::new_session_with_actual_name(&branch, &cwd_str)
+                        .and_then(|created_name| tmux::switch_client(&created_name));
+                    if result.is_ok() {
+                        self.should_quit = true;
+                    } else {
+                        self.reset_create_state();
+                        self.mode = Mode::Normal;
+                    }
+                    return;
+                }
+
                 let (name, cwd) = match candidate.target {
                     CreateTarget::ResumeDead { name, cwd } => (name, cwd),
                     CreateTarget::NewNamed { name, cwd } => (name, cwd),
                     CreateTarget::PathDir { path } => (path.clone(), path),
+                    CreateTarget::NewWorktree { .. } => unreachable!(),
                 };
 
                 let live_session_name = self.sessions.iter()
