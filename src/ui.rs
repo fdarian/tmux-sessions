@@ -4,7 +4,9 @@ use ansi_to_tui::IntoText;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Padding, Paragraph, Wrap};
+use ratatui::widgets::{
+    Block, Borders, Clear, List, ListItem, ListState, Padding, Paragraph, Wrap,
+};
 use ratatui::Frame;
 
 use crate::app::{App, MonitorSort, RenameTarget};
@@ -62,7 +64,9 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 fn render_tree(frame: &mut Frame, app: &mut App, area: Rect) {
     let key_width = if app.flat_entries.len() > 10 { 5 } else { 3 };
 
-    let hidden_session_ids: HashSet<String> = app.sessions.iter()
+    let hidden_session_ids: HashSet<String> = app
+        .sessions
+        .iter()
         .filter(|s| app.hidden.contains(&s.name))
         .map(|s| s.id.clone())
         .collect();
@@ -71,12 +75,16 @@ fn render_tree(frame: &mut Frame, app: &mut App, area: Rect) {
     let mut items = Vec::with_capacity(app.flat_entries.len());
     for entry in &app.flat_entries {
         let is_expanded = app.opened.contains(&entry.node_id);
-        let display_index = if matches!(entry.node_id, NodeId::Group(_)) { usize::MAX } else { shortcut_index };
+        let display_index = if tree::is_shortcut_labeled(&entry.node_id) {
+            shortcut_index
+        } else {
+            usize::MAX
+        };
         let raw_line = tree::format_line(entry, display_index, is_expanded, key_width);
-        if entry.node_id != NodeId::Separator && !matches!(entry.node_id, NodeId::Group(_)) {
+        if tree::is_shortcut_labeled(&entry.node_id) {
             shortcut_index += 1;
         }
-        let is_marked = match &entry.node_id {
+        let is_marked = match entry.node_id.target() {
             NodeId::Window(_, window_id) => app.marked_windows.contains(window_id),
             _ => false,
         };
@@ -104,7 +112,7 @@ fn render_tree(frame: &mut Frame, app: &mut App, area: Rect) {
         } else {
             ListItem::new(line)
         };
-        let is_hidden = match &entry.node_id {
+        let is_hidden = match entry.node_id.target() {
             NodeId::Session(id) | NodeId::Window(id, _) | NodeId::Pane(id, _, _) => {
                 hidden_session_ids.contains(id)
             }
@@ -117,8 +125,7 @@ fn render_tree(frame: &mut Frame, app: &mut App, area: Rect) {
         }
     }
 
-    let list = List::new(items)
-        .highlight_style(app.highlight_style);
+    let list = List::new(items).highlight_style(app.highlight_style);
 
     if app.mode == Mode::Filtering || !app.filter_query.is_empty() {
         let chunks = Layout::default()
@@ -218,7 +225,9 @@ fn render_preview(frame: &mut Frame, app: &App, area: Rect) {
         return;
     }
 
-    let constraints: Vec<Constraint> = app.preview_panes.iter()
+    let constraints: Vec<Constraint> = app
+        .preview_panes
+        .iter()
         .map(|_| Constraint::Ratio(1, app.preview_panes.len() as u32))
         .collect();
 
@@ -239,7 +248,11 @@ fn render_preview(frame: &mut Frame, app: &App, area: Rect) {
             pane_area
         };
 
-        let content = preview_pane.content.as_slice().into_text().unwrap_or_default();
+        let content = preview_pane
+            .content
+            .as_slice()
+            .into_text()
+            .unwrap_or_default();
         let paragraph = Paragraph::new(content);
         frame.render_widget(paragraph, pane_inner);
 
@@ -270,8 +283,11 @@ fn render_preview(frame: &mut Frame, app: &App, area: Rect) {
             frame.render_widget(Clear, label_area);
             frame.render_widget(label_block, label_area);
             frame.render_widget(
-                Paragraph::new(Span::styled(label_text.trim(), Style::default().fg(label_color)))
-                    .alignment(Alignment::Center),
+                Paragraph::new(Span::styled(
+                    label_text.trim(),
+                    Style::default().fg(label_color),
+                ))
+                .alignment(Alignment::Center),
                 label_inner,
             );
         }
@@ -288,7 +304,12 @@ fn render_confirmation(frame: &mut Frame, app: &App) {
     frame.render_widget(Clear, area);
 
     let popup = Paragraph::new(text)
-        .block(Block::default().borders(Borders::ALL).title("Confirm").padding(Padding::vertical(1)))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Confirm")
+                .padding(Padding::vertical(1)),
+        )
         .alignment(Alignment::Center)
         .wrap(Wrap { trim: false });
 
@@ -313,18 +334,14 @@ fn render_rename_input(frame: &mut Frame, app: &App) {
         Span::raw(before),
         Span::styled(
             cursor_char,
-            Style::default()
-                .bg(Color::White)
-                .fg(Color::Black),
+            Style::default().bg(Color::White).fg(Color::Black),
         ),
         Span::raw(after),
     ]);
-    let hint_line = Line::from(
-        Span::styled(
-            "Enter confirm · Esc cancel",
-            Style::default().fg(Color::DarkGray),
-        )
-    );
+    let hint_line = Line::from(Span::styled(
+        "Enter confirm · Esc cancel",
+        Style::default().fg(Color::DarkGray),
+    ));
     let text = Text::from(vec![input_line, hint_line]);
 
     let title = match app.renaming_target {
@@ -336,7 +353,12 @@ fn render_rename_input(frame: &mut Frame, app: &App) {
     frame.render_widget(Clear, area);
 
     let popup = Paragraph::new(text)
-        .block(Block::default().borders(Borders::ALL).title(title).padding(Padding::vertical(1)))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(title)
+                .padding(Padding::vertical(1)),
+        )
         .alignment(Alignment::Left);
 
     frame.render_widget(popup, area);
@@ -365,25 +387,26 @@ fn render_move_window(frame: &mut Frame, app: &App) {
         .split(inner);
 
     if app.move_candidates.is_empty() {
-        let hint = Paragraph::new(
-            Span::styled(
-                "no matches - type a name to create",
-                Style::default().fg(Color::DarkGray),
-            )
-        )
-            .alignment(Alignment::Center);
+        let hint = Paragraph::new(Span::styled(
+            "no matches - type a name to create",
+            Style::default().fg(Color::DarkGray),
+        ))
+        .alignment(Alignment::Center);
         frame.render_widget(hint, chunks[0]);
     } else {
-        let items: Vec<ListItem> = app.move_candidates.iter().map(|candidate| {
-            let item = ListItem::new(candidate.label.clone());
-            if candidate.dim {
-                item.style(Style::default().add_modifier(Modifier::DIM))
-            } else {
-                item
-            }
-        }).collect();
-        let list = List::new(items)
-            .highlight_style(app.highlight_style);
+        let items: Vec<ListItem> = app
+            .move_candidates
+            .iter()
+            .map(|candidate| {
+                let item = ListItem::new(candidate.label.clone());
+                if candidate.dim {
+                    item.style(Style::default().add_modifier(Modifier::DIM))
+                } else {
+                    item
+                }
+            })
+            .collect();
+        let list = List::new(items).highlight_style(app.highlight_style);
         let mut state = ListState::default();
         state.select(Some(app.move_selected));
         frame.render_stateful_widget(list, chunks[0], &mut state);
@@ -405,9 +428,7 @@ fn render_move_window(frame: &mut Frame, app: &App) {
         Span::raw(format!("Search: {}", before)),
         Span::styled(
             cursor_char,
-            Style::default()
-                .bg(Color::White)
-                .fg(Color::Black),
+            Style::default().bg(Color::White).fg(Color::Black),
         ),
         Span::raw(after),
     ]);
@@ -417,7 +438,9 @@ fn render_move_window(frame: &mut Frame, app: &App) {
 fn render_create_session(frame: &mut Frame, app: &App) {
     let max_width = frame.area().width.saturating_sub(2).max(1);
     let max_height = frame.area().height.saturating_sub(2).max(1);
-    let popup_width = ((frame.area().width.saturating_mul(4)) / 5).max(68).min(max_width);
+    let popup_width = ((frame.area().width.saturating_mul(4)) / 5)
+        .max(68)
+        .min(max_width);
     let popup_height = 24.min(max_height);
     let area = centered_rect(popup_width, popup_height, frame.area());
     frame.render_widget(Clear, area);
@@ -449,7 +472,7 @@ fn render_create_session(frame: &mut Frame, app: &App) {
                 " Tab / Shift+Tab switch mode ",
                 Style::default().add_modifier(Modifier::DIM),
             )])
-                .alignment(Alignment::Right),
+            .alignment(Alignment::Right),
         );
     }
     if let Some(err) = &app.create_load_error {
@@ -458,7 +481,7 @@ fn render_create_session(frame: &mut Frame, app: &App) {
                 format!(" {} ", err),
                 Style::default().fg(Color::Red).add_modifier(Modifier::DIM),
             )])
-                .alignment(Alignment::Left),
+            .alignment(Alignment::Left),
         );
     }
     let inner = block.inner(area);
@@ -473,7 +496,9 @@ fn render_create_session(frame: &mut Frame, app: &App) {
         let message = if app.create_tab == CreateTab::History {
             "no matches - type a name to create"
         } else if app.create_tab == CreateTab::Worktree
-            && app.config.as_ref()
+            && app
+                .config
+                .as_ref()
                 .and_then(|c| c.worktree_create_command.as_ref())
                 .is_some()
         {
@@ -481,27 +506,27 @@ fn render_create_session(frame: &mut Frame, app: &App) {
         } else {
             "no matches"
         };
-        let hint = Paragraph::new(
-            Span::styled(
-                message,
-                Style::default().fg(Color::DarkGray),
-            )
-        )
+        let hint = Paragraph::new(Span::styled(message, Style::default().fg(Color::DarkGray)))
             .alignment(Alignment::Center);
         frame.render_widget(hint, chunks[0]);
     } else {
         let list_width = chunks[0].width as usize;
-        let score_width = app.create_candidates.iter()
+        let score_width = app
+            .create_candidates
+            .iter()
             .filter_map(|candidate| candidate.frecency)
             .map(|frecency| format!("{frecency:.1}").len())
             .max()
             .unwrap_or(0);
-        let items: Vec<ListItem> = app.create_candidates.iter().map(|candidate| {
-            let line = create_candidate_line(candidate, list_width, score_width);
-            ListItem::new(line)
-        }).collect();
-        let list = List::new(items)
-            .highlight_style(app.highlight_style);
+        let items: Vec<ListItem> = app
+            .create_candidates
+            .iter()
+            .map(|candidate| {
+                let line = create_candidate_line(candidate, list_width, score_width);
+                ListItem::new(line)
+            })
+            .collect();
+        let list = List::new(items).highlight_style(app.highlight_style);
         let mut state = ListState::default();
         state.select(Some(app.create_selected));
         frame.render_stateful_widget(list, chunks[0], &mut state);
@@ -523,16 +548,21 @@ fn render_create_session(frame: &mut Frame, app: &App) {
         Span::raw(format!("Search: {}", before)),
         Span::styled(
             cursor_char,
-            Style::default()
-                .bg(Color::White)
-                .fg(Color::Black),
+            Style::default().bg(Color::White).fg(Color::Black),
         ),
         Span::raw(after),
     ]);
-    let counter = format!("{}/{}", app.create_candidates.len(), app.create_total_count());
+    let counter = format!(
+        "{}/{}",
+        app.create_candidates.len(),
+        app.create_total_count()
+    );
     let footer_chunks = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Min(0), Constraint::Length(counter.len() as u16 + 1)])
+        .constraints([
+            Constraint::Min(0),
+            Constraint::Length(counter.len() as u16 + 1),
+        ])
         .split(chunks[1]);
     frame.render_widget(Paragraph::new(search_line), footer_chunks[0]);
     frame.render_widget(
@@ -540,12 +570,16 @@ fn render_create_session(frame: &mut Frame, app: &App) {
             counter,
             Style::default().add_modifier(Modifier::DIM),
         ))
-            .alignment(Alignment::Right),
+        .alignment(Alignment::Right),
         footer_chunks[1],
     );
 }
 
-fn create_candidate_line(candidate: &crate::create::CreateCandidate, width: usize, score_width: usize) -> Line<'static> {
+fn create_candidate_line(
+    candidate: &crate::create::CreateCandidate,
+    width: usize,
+    score_width: usize,
+) -> Line<'static> {
     let mut spans = Vec::new();
     let mut content_width = width;
 
@@ -611,16 +645,22 @@ fn render_about(frame: &mut Frame) {
         Line::from(name).alignment(Alignment::Center),
         Line::from(format!("v{} ({})", version, commit)).alignment(Alignment::Center),
         Line::from(""),
-        Line::from(
-            Span::styled("[esc] close", Style::default().add_modifier(Modifier::DIM))
-        ).alignment(Alignment::Center),
+        Line::from(Span::styled(
+            "[esc] close",
+            Style::default().add_modifier(Modifier::DIM),
+        ))
+        .alignment(Alignment::Center),
     ]);
 
     let area = centered_rect(34, 7, frame.area());
     frame.render_widget(Clear, area);
 
-    let popup = Paragraph::new(text)
-        .block(Block::default().borders(Borders::ALL).title("About").padding(Padding::vertical(1)));
+    let popup = Paragraph::new(text).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title("About")
+            .padding(Padding::vertical(1)),
+    );
 
     frame.render_widget(popup, area);
 }
@@ -652,7 +692,11 @@ fn monitor_detail_items(row: &ProcessRow) -> Vec<ListItem<'_>> {
         let ancestor_count = row.ancestors.len();
         for i in 0..ancestor_count {
             let ancestor = &row.ancestors[i];
-            let connector = if i + 1 == ancestor_count { "  └ " } else { "  ├ " };
+            let connector = if i + 1 == ancestor_count {
+                "  └ "
+            } else {
+                "  ├ "
+            };
             lines.push(format!(
                 "{}{} ({})",
                 connector, ancestor.command, ancestor.pid
@@ -732,11 +776,7 @@ fn render_monitor(frame: &mut Frame, app: &mut App, area: Rect) {
             MONITOR_COMMAND_WIDTH,
             false,
         );
-        let pane = format_monitor_cell(
-            &procs::format_pane_label(&row.pane),
-            pane_width,
-            false,
-        );
+        let pane = format_monitor_cell(&procs::format_pane_label(&row.pane), pane_width, false);
         let line = Line::from(vec![
             Span::raw(mem),
             Span::raw("  "),
@@ -752,15 +792,14 @@ fn render_monitor(frame: &mut Frame, app: &mut App, area: Rect) {
         }
     }
 
-    let list = List::new(items)
-        .highlight_style(app.highlight_style);
+    let list = List::new(items).highlight_style(app.highlight_style);
 
     frame.render_stateful_widget(list, inner_chunks[1], &mut app.monitor_list_state);
 
     let footer = Paragraph::new(
-        "[j/k] move  [s] sort  [space] details  [enter] switch  [x] kill  [esc/q] back"
+        "[j/k] move  [s] sort  [space] details  [enter] switch  [x] kill  [esc/q] back",
     )
-        .style(Style::default().fg(Color::DarkGray));
+    .style(Style::default().fg(Color::DarkGray));
     frame.render_widget(footer, outer_chunks[1]);
 }
 
@@ -797,8 +836,7 @@ fn render_full_preview(frame: &mut Frame, app: &App, area: Rect) {
     } else {
         "[esc] back  [enter] switch"
     };
-    let footer = Paragraph::new(footer_text)
-        .style(Style::default().fg(Color::DarkGray));
+    let footer = Paragraph::new(footer_text).style(Style::default().fg(Color::DarkGray));
     frame.render_widget(footer, chunks[1]);
 }
 

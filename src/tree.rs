@@ -6,6 +6,8 @@ use ratatui::text::Line;
 
 use crate::tmux;
 
+const RECENTS_HEADER_TEXT: &str = "recents";
+
 fn session_text(session: &tmux::Session) -> String {
     let mut text = format!("{}: {} windows", session.display_name, session.window_count);
     if session.attached {
@@ -54,8 +56,24 @@ pub enum NodeId {
     Session(String),
     Window(String, String),
     Pane(String, String, String),
-    Separator,
+    Recent(Box<NodeId>),
+    Separator(usize),
+    Header(String),
     DeadSession(String),
+}
+
+impl NodeId {
+    pub fn target(&self) -> &NodeId {
+        match self {
+            NodeId::Recent(node_id) => node_id.target(),
+            _ => self,
+        }
+    }
+}
+
+pub fn is_shortcut_labeled(node_id: &NodeId) -> bool {
+    !matches!(node_id, NodeId::Separator(_) | NodeId::Header(_))
+        && !matches!(node_id.target(), NodeId::Group(_))
 }
 
 pub struct FlatEntry {
@@ -67,27 +85,39 @@ pub struct FlatEntry {
     pub text: String,
 }
 
+fn maybe_wrap_recent(node_id: NodeId, wrap_recent: bool) -> NodeId {
+    if wrap_recent {
+        return NodeId::Recent(Box::new(node_id));
+    }
+    node_id
+}
+
 fn flatten_session_list(
     sessions: &[&tmux::Session],
     windows: &[tmux::Window],
     panes: &[tmux::Pane],
     opened: &HashSet<NodeId>,
     entries: &mut Vec<FlatEntry>,
+    wrap_recent: bool,
+    depth_offset: u8,
+    ancestor_prefix: &[bool],
 ) {
     for (si, session) in sessions.iter().enumerate() {
         let session_is_last_sibling = si == sessions.len() - 1;
         let has_children = windows.iter().any(|w| w.session_id == session.id);
+        let session_node_id = NodeId::Session(session.id.clone());
+        let opened_session_node_id = maybe_wrap_recent(session_node_id.clone(), wrap_recent);
 
         entries.push(FlatEntry {
-            node_id: NodeId::Session(session.id.clone()),
-            depth: 0,
+            node_id: opened_session_node_id.clone(),
+            depth: depth_offset,
             has_children,
             is_last_sibling: session_is_last_sibling,
-            ancestor_is_last: vec![],
+            ancestor_is_last: ancestor_prefix.to_vec(),
             text: session_text(session),
         });
 
-        if !opened.contains(&NodeId::Session(session.id.clone())) {
+        if !opened.contains(&opened_session_node_id) {
             continue;
         }
 
@@ -101,17 +131,23 @@ fn flatten_session_list(
             let has_children = panes
                 .iter()
                 .any(|p| p.session_id == session.id && p.window_id == window.id);
+            let window_node_id = NodeId::Window(session.id.clone(), window.id.clone());
+            let opened_window_node_id = maybe_wrap_recent(window_node_id.clone(), wrap_recent);
+            let mut ancestor_is_last = ancestor_prefix.to_vec();
+            if depth_offset > 0 {
+                ancestor_is_last.push(session_is_last_sibling);
+            }
 
             entries.push(FlatEntry {
-                node_id: NodeId::Window(session.id.clone(), window.id.clone()),
-                depth: 1,
+                node_id: opened_window_node_id.clone(),
+                depth: depth_offset + 1,
                 has_children,
                 is_last_sibling: window_is_last_sibling,
-                ancestor_is_last: vec![],
+                ancestor_is_last,
                 text: window_text(window),
             });
 
-            if !opened.contains(&NodeId::Window(session.id.clone(), window.id.clone())) {
+            if !opened.contains(&opened_window_node_id) {
                 continue;
             }
 
@@ -122,13 +158,20 @@ fn flatten_session_list(
 
             for (pi, pane) in window_panes.iter().enumerate() {
                 let pane_is_last_sibling = pi == window_panes.len() - 1;
+                let pane_node_id =
+                    NodeId::Pane(session.id.clone(), window.id.clone(), pane.id.clone());
+                let mut ancestor_is_last = ancestor_prefix.to_vec();
+                if depth_offset > 0 {
+                    ancestor_is_last.push(session_is_last_sibling);
+                }
+                ancestor_is_last.push(window_is_last_sibling);
 
                 entries.push(FlatEntry {
-                    node_id: NodeId::Pane(session.id.clone(), window.id.clone(), pane.id.clone()),
-                    depth: 2,
+                    node_id: maybe_wrap_recent(pane_node_id, wrap_recent),
+                    depth: depth_offset + 2,
                     has_children: false,
                     is_last_sibling: pane_is_last_sibling,
-                    ancestor_is_last: vec![window_is_last_sibling],
+                    ancestor_is_last,
                     text: pane_text(pane),
                 });
             }
@@ -143,13 +186,16 @@ fn flatten_group_sessions(
     opened: &HashSet<NodeId>,
     entries: &mut Vec<FlatEntry>,
     separator: &str,
+    wrap_recent: bool,
 ) {
     for (si, session) in sessions.iter().enumerate() {
         let session_is_last = si == sessions.len() - 1;
         let has_children = windows.iter().any(|w| w.session_id == session.id);
+        let session_node_id = NodeId::Session(session.id.clone());
+        let opened_session_node_id = maybe_wrap_recent(session_node_id.clone(), wrap_recent);
 
         entries.push(FlatEntry {
-            node_id: NodeId::Session(session.id.clone()),
+            node_id: opened_session_node_id.clone(),
             depth: 1,
             has_children,
             is_last_sibling: session_is_last,
@@ -157,7 +203,7 @@ fn flatten_group_sessions(
             text: session_text_with_suffix(session, separator),
         });
 
-        if !opened.contains(&NodeId::Session(session.id.clone())) {
+        if !opened.contains(&opened_session_node_id) {
             continue;
         }
 
@@ -171,9 +217,11 @@ fn flatten_group_sessions(
             let has_children = panes
                 .iter()
                 .any(|p| p.session_id == session.id && p.window_id == window.id);
+            let window_node_id = NodeId::Window(session.id.clone(), window.id.clone());
+            let opened_window_node_id = maybe_wrap_recent(window_node_id.clone(), wrap_recent);
 
             entries.push(FlatEntry {
-                node_id: NodeId::Window(session.id.clone(), window.id.clone()),
+                node_id: opened_window_node_id.clone(),
                 depth: 2,
                 has_children,
                 is_last_sibling: window_is_last,
@@ -181,7 +229,7 @@ fn flatten_group_sessions(
                 text: window_text(window),
             });
 
-            if !opened.contains(&NodeId::Window(session.id.clone(), window.id.clone())) {
+            if !opened.contains(&opened_window_node_id) {
                 continue;
             }
 
@@ -192,8 +240,10 @@ fn flatten_group_sessions(
 
             for (pi, pane) in window_panes.iter().enumerate() {
                 let pane_is_last = pi == window_panes.len() - 1;
+                let pane_node_id =
+                    NodeId::Pane(session.id.clone(), window.id.clone(), pane.id.clone());
                 entries.push(FlatEntry {
-                    node_id: NodeId::Pane(session.id.clone(), window.id.clone(), pane.id.clone()),
+                    node_id: maybe_wrap_recent(pane_node_id, wrap_recent),
                     depth: 3,
                     has_children: false,
                     is_last_sibling: pane_is_last,
@@ -212,6 +262,7 @@ fn flatten_grouped(
     opened: &HashSet<NodeId>,
     entries: &mut Vec<FlatEntry>,
     separator: &str,
+    wrap_recent: bool,
 ) {
     let mut group_order: Vec<String> = Vec::new();
     let mut group_map: HashMap<String, Vec<&tmux::Session>> = HashMap::new();
@@ -226,14 +277,15 @@ fn flatten_grouped(
                 group_order.push(prefix.to_string());
                 group_map.insert(prefix.to_string(), Vec::new());
             }
-            group_map.get_mut(prefix).unwrap().push(*session);
+            group_map
+                .get_mut(prefix)
+                .expect("group must exist")
+                .push(*session);
         } else {
             ungrouped.push(*session);
         }
     }
 
-    // Sessions whose display_name exactly matches a group prefix become peer rows:
-    // rendered as a normal session row immediately before their group header.
     let mut peer_session: HashMap<String, &tmux::Session> = HashMap::new();
     let truly_ungrouped: Vec<&tmux::Session> = ungrouped
         .into_iter()
@@ -248,15 +300,17 @@ fn flatten_grouped(
         .collect();
 
     for prefix in &group_order {
-        let group_sessions = group_map.get(prefix).unwrap();
+        let group_sessions = group_map.get(prefix).expect("group must exist");
         let count = group_sessions.len();
-        let is_expanded = opened.contains(&NodeId::Group(prefix.clone()));
+        let group_node_id = maybe_wrap_recent(NodeId::Group(prefix.clone()), wrap_recent);
+        let is_expanded = opened.contains(&group_node_id);
 
-        // Render peer session (if any) as a normal top-level row before the group header.
         if let Some(peer) = peer_session.get(prefix).copied() {
             let has_children = windows.iter().any(|w| w.session_id == peer.id);
+            let session_node_id = NodeId::Session(peer.id.clone());
+            let opened_session_node_id = maybe_wrap_recent(session_node_id.clone(), wrap_recent);
             entries.push(FlatEntry {
-                node_id: NodeId::Session(peer.id.clone()),
+                node_id: opened_session_node_id.clone(),
                 depth: 0,
                 has_children,
                 is_last_sibling: false,
@@ -264,7 +318,7 @@ fn flatten_grouped(
                 text: session_text(peer),
             });
 
-            if opened.contains(&NodeId::Session(peer.id.clone())) {
+            if opened.contains(&opened_session_node_id) {
                 let peer_windows: Vec<&tmux::Window> =
                     windows.iter().filter(|w| w.session_id == peer.id).collect();
                 for (wi, window) in peer_windows.iter().enumerate() {
@@ -272,8 +326,11 @@ fn flatten_grouped(
                     let has_win_children = panes
                         .iter()
                         .any(|p| p.session_id == peer.id && p.window_id == window.id);
+                    let window_node_id = NodeId::Window(peer.id.clone(), window.id.clone());
+                    let opened_window_node_id =
+                        maybe_wrap_recent(window_node_id.clone(), wrap_recent);
                     entries.push(FlatEntry {
-                        node_id: NodeId::Window(peer.id.clone(), window.id.clone()),
+                        node_id: opened_window_node_id.clone(),
                         depth: 1,
                         has_children: has_win_children,
                         is_last_sibling: window_is_last,
@@ -281,7 +338,7 @@ fn flatten_grouped(
                         text: window_text(window),
                     });
 
-                    if !opened.contains(&NodeId::Window(peer.id.clone(), window.id.clone())) {
+                    if !opened.contains(&opened_window_node_id) {
                         continue;
                     }
 
@@ -291,12 +348,10 @@ fn flatten_grouped(
                         .collect();
                     for (pi, pane) in window_panes.iter().enumerate() {
                         let pane_is_last = pi == window_panes.len() - 1;
+                        let pane_node_id =
+                            NodeId::Pane(peer.id.clone(), window.id.clone(), pane.id.clone());
                         entries.push(FlatEntry {
-                            node_id: NodeId::Pane(
-                                peer.id.clone(),
-                                window.id.clone(),
-                                pane.id.clone(),
-                            ),
+                            node_id: maybe_wrap_recent(pane_node_id, wrap_recent),
                             depth: 2,
                             has_children: false,
                             is_last_sibling: pane_is_last,
@@ -309,7 +364,7 @@ fn flatten_grouped(
         }
 
         entries.push(FlatEntry {
-            node_id: NodeId::Group(prefix.clone()),
+            node_id: group_node_id,
             depth: 0,
             has_children: true,
             is_last_sibling: false,
@@ -318,11 +373,158 @@ fn flatten_grouped(
         });
 
         if is_expanded {
-            flatten_group_sessions(group_sessions, windows, panes, opened, entries, separator);
+            flatten_group_sessions(
+                group_sessions,
+                windows,
+                panes,
+                opened,
+                entries,
+                separator,
+                wrap_recent,
+            );
         }
     }
 
-    flatten_session_list(&truly_ungrouped, windows, panes, opened, entries);
+    flatten_session_list(
+        &truly_ungrouped,
+        windows,
+        panes,
+        opened,
+        entries,
+        wrap_recent,
+        0,
+        &[],
+    );
+}
+
+fn flatten_recents_header(entries: &mut Vec<FlatEntry>) {
+    entries.push(FlatEntry {
+        node_id: NodeId::Header(RECENTS_HEADER_TEXT.to_string()),
+        depth: 0,
+        has_children: false,
+        is_last_sibling: false,
+        ancestor_is_last: vec![],
+        text: RECENTS_HEADER_TEXT.to_string(),
+    });
+}
+
+fn flatten_recents_grouped(
+    sessions: &[&tmux::Session],
+    windows: &[tmux::Window],
+    panes: &[tmux::Pane],
+    opened: &HashSet<NodeId>,
+    entries: &mut Vec<FlatEntry>,
+    separator: &str,
+) {
+    let mut group_map: HashMap<String, Vec<&tmux::Session>> = HashMap::new();
+    let mut ungrouped: Vec<&tmux::Session> = Vec::new();
+
+    for session in sessions.iter() {
+        if let Some((prefix, suffix)) = session.display_name.split_once(separator) {
+            if !prefix.is_empty() && !suffix.is_empty() {
+                group_map
+                    .entry(prefix.to_string())
+                    .or_default()
+                    .push(*session);
+                continue;
+            }
+        }
+        ungrouped.push(*session);
+    }
+
+    for group_sessions in group_map.values_mut() {
+        group_sessions.sort_by(|a, b| b.activity.cmp(&a.activity));
+    }
+    ungrouped.sort_by(|a, b| b.activity.cmp(&a.activity));
+
+    let mut top_level_groups: Vec<(String, u64)> = group_map
+        .iter()
+        .map(|entry| {
+            let max_activity = entry
+                .1
+                .iter()
+                .map(|session| session.activity)
+                .max()
+                .unwrap_or(0);
+            (entry.0.clone(), max_activity)
+        })
+        .collect();
+    top_level_groups.sort_by(|a, b| b.1.cmp(&a.1));
+
+    let top_level_ungrouped: Vec<&tmux::Session> = ungrouped;
+
+    let mut group_index = 0usize;
+    let mut ungrouped_index = 0usize;
+    while group_index < top_level_groups.len() || ungrouped_index < top_level_ungrouped.len() {
+        let next_group = top_level_groups.get(group_index);
+        let next_session = top_level_ungrouped.get(ungrouped_index);
+        let use_group = match (next_group, next_session) {
+            (Some(group), Some(session)) => group.1 >= session.activity,
+            (Some(_), None) => true,
+            (None, Some(_)) => false,
+            (None, None) => break,
+        };
+
+        if use_group {
+            let prefix = &top_level_groups[group_index].0;
+            let group_sessions = group_map.get(prefix).expect("recent group must exist");
+            let group_node_id = NodeId::Recent(Box::new(NodeId::Group(prefix.clone())));
+            entries.push(FlatEntry {
+                node_id: group_node_id.clone(),
+                depth: 0,
+                has_children: true,
+                is_last_sibling: false,
+                ancestor_is_last: vec![],
+                text: format!("{} ({})", prefix, group_sessions.len()),
+            });
+            if opened.contains(&group_node_id) {
+                flatten_group_sessions(
+                    group_sessions,
+                    windows,
+                    panes,
+                    opened,
+                    entries,
+                    separator,
+                    true,
+                );
+            }
+            group_index += 1;
+            continue;
+        }
+
+        flatten_session_list(
+            &[top_level_ungrouped[ungrouped_index]],
+            windows,
+            panes,
+            opened,
+            entries,
+            true,
+            0,
+            &[],
+        );
+        ungrouped_index += 1;
+    }
+}
+
+fn flatten_recents(
+    sessions: &[&tmux::Session],
+    windows: &[tmux::Window],
+    panes: &[tmux::Pane],
+    opened: &HashSet<NodeId>,
+    entries: &mut Vec<FlatEntry>,
+    group_separator: Option<&str>,
+) {
+    if sessions.is_empty() {
+        return;
+    }
+
+    flatten_recents_header(entries);
+    match group_separator {
+        Some(separator) => {
+            flatten_recents_grouped(sessions, windows, panes, opened, entries, separator)
+        }
+        None => flatten_session_list(sessions, windows, panes, opened, entries, true, 0, &[]),
+    }
 }
 
 pub fn flatten(
@@ -334,6 +536,7 @@ pub fn flatten(
     hidden: &[String],
     show_hidden: bool,
     group_separator: Option<&str>,
+    recent_max_age_secs: Option<u64>,
 ) -> Vec<FlatEntry> {
     let mut entries = Vec::new();
 
@@ -347,19 +550,66 @@ pub fn flatten(
         .iter()
         .filter(|s| !pinned.contains(&s.name) && is_visible(&s.name))
         .collect();
+    let recent_sessions: Vec<&tmux::Session> = match recent_max_age_secs {
+        Some(max_age_secs) => {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock must be after unix epoch")
+                .as_secs();
+            let mut eligible: Vec<&tmux::Session> = sessions
+                .iter()
+                .filter(|session| {
+                    !pinned.contains(&session.name)
+                        && !hidden.contains(&session.name)
+                        && now.saturating_sub(session.activity) <= max_age_secs
+                })
+                .collect();
+            eligible.sort_by(|a, b| b.activity.cmp(&a.activity));
+            eligible
+        }
+        None => Vec::new(),
+    };
 
-    // Pinned always render flat at the top, regardless of grouping.
-    flatten_session_list(&pinned_sessions, windows, panes, opened, &mut entries);
+    flatten_session_list(
+        &pinned_sessions,
+        windows,
+        panes,
+        opened,
+        &mut entries,
+        false,
+        0,
+        &[],
+    );
 
-    if !pinned_sessions.is_empty() && !unpinned_sessions.is_empty() {
+    let mut next_separator_id = 0usize;
+    let mut push_separator = |entries: &mut Vec<FlatEntry>| {
         entries.push(FlatEntry {
-            node_id: NodeId::Separator,
+            node_id: NodeId::Separator(next_separator_id),
             depth: 0,
             has_children: false,
             is_last_sibling: false,
             ancestor_is_last: vec![],
             text: String::new(),
         });
+        next_separator_id += 1;
+    };
+
+    if !pinned_sessions.is_empty() && (!recent_sessions.is_empty() || !unpinned_sessions.is_empty())
+    {
+        push_separator(&mut entries);
+    }
+
+    flatten_recents(
+        &recent_sessions,
+        windows,
+        panes,
+        opened,
+        &mut entries,
+        group_separator,
+    );
+
+    if !recent_sessions.is_empty() && !unpinned_sessions.is_empty() {
+        push_separator(&mut entries);
     }
 
     match group_separator {
@@ -370,8 +620,18 @@ pub fn flatten(
             opened,
             &mut entries,
             sep,
+            false,
         ),
-        None => flatten_session_list(&unpinned_sessions, windows, panes, opened, &mut entries),
+        None => flatten_session_list(
+            &unpinned_sessions,
+            windows,
+            panes,
+            opened,
+            &mut entries,
+            false,
+            0,
+            &[],
+        ),
     }
 
     entries
@@ -383,10 +643,6 @@ pub struct DeadSessionRef<'a> {
     pub last_seen: u64,
 }
 
-/// Multi-term fuzzy match: splits `query` on whitespace and requires every term
-/// to fuzzy-match `text`. Returns `Some((total_score, union_of_indices))` when
-/// all terms match, `None` if any term misses. An empty query always matches
-/// with score 0 and no indices.
 pub fn fuzzy_match_multi(
     matcher: &fuzzy_matcher::skim::SkimMatcherV2,
     query: &str,
@@ -468,10 +724,18 @@ pub fn format_line(
     is_expanded: bool,
     key_width: usize,
 ) -> Line<'static> {
-    if entry.node_id == NodeId::Separator {
+    if matches!(entry.node_id, NodeId::Separator(_)) {
         let prefix = " ".repeat(key_width + 1);
         return Line::styled(
             format!("{}─────────────────────────────────────", prefix),
+            Style::default().fg(Color::DarkGray),
+        );
+    }
+
+    if matches!(entry.node_id, NodeId::Header(_)) {
+        let prefix = " ".repeat(key_width + 1);
+        return Line::styled(
+            format!("{}{}", prefix, entry.text),
             Style::default().fg(Color::DarkGray),
         );
     }
@@ -483,7 +747,6 @@ pub fn format_line(
     let mut result = format!("{:<width$} ", key_str, width = key_width);
 
     if entry.depth > 0 {
-        // Ancestor columns: one 4-char column per ancestor level
         for d in 0..(entry.depth - 1) {
             if entry.ancestor_is_last[d as usize] {
                 result.push_str("    ");
@@ -492,7 +755,6 @@ pub fn format_line(
             }
         }
 
-        // Immediate connector for this node
         if entry.is_last_sibling {
             result.push_str("\u{2514}\u{2500}> ");
         } else {

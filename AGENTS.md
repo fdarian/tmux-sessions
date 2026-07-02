@@ -58,6 +58,7 @@ Optional config file at `~/.config/tmux-sessions/config.json`:
 {
   "formatter": "/path/to/format-session.sh",
   "group_name_separator": "/",
+  "recents": { "enabled": true, "max_age_secs": 3600 },
   "zoxide": true,
   "worktree_create_command": "wt switch -y -c {branch}"
 }
@@ -65,12 +66,21 @@ Optional config file at `~/.config/tmux-sessions/config.json`:
 
 - **formatter**: Path to a script that receives the raw session name as its first argument and prints the formatted name to stdout
 - **group_name_separator**: Groups sessions by the prefix before the first occurrence of this separator in their `display_name`. Sessions without the separator appear ungrouped at the root level. Groups start expanded and can be collapsed/expanded with `h`/`l`. Pinned sessions are pulled out of their group and shown at the top (with the same separator as in flat mode); group counts reflect only unpinned members.
+- **recents**: Optional opt-in view config. `enabled: true` turns on a labeled `recents` section. `max_age_secs` defaults to `3600` when omitted and limits eligibility to live sessions whose `session_activity` is within that age window.
 - **zoxide**: Enables the create-session popup's zoxide tab when set to `true` and the `zoxide` binary is installed
 - **worktree_create_command**: Template command to create a new git worktree. `{branch}` is substituted with the typed branch name. Run directly (no shell), cwd = current session's cwd. After running, git worktree list is re-queried to find the new worktree path; the session is created there. When set, the Worktree tab appears whenever cwd is inside any git repo (not just repos with >1 existing worktree). Example: `"wt switch -y -c {branch}"`.
 - Missing config file → raw session names used (no error)
 - Invalid JSON → app fails to start with error
 - Formatter failure (missing script, non-zero exit, empty output) → per-session fallback to raw name
 - `Session.name` is always the raw tmux name (used for tmux commands); `Session.display_name` is what the UI shows
+
+## Recents
+
+- `recents` is a view, not a partition: eligible sessions still appear in the main tree.
+- It is opt-in via config and only considers live sessions at the session level.
+- Eligible sessions must be recent enough, not pinned, and not hidden.
+- The section renders as a labeled `recents` block between pinned and main. With grouping enabled, recents groups are ordered by their most-recent eligible child and contain only recent children, not the full group.
+- Recent rows use distinct wrapped `NodeId`s so they can be expanded independently while actions still target the underlying session/window/pane.
 
 ## Reopening closed sessions
 

@@ -244,13 +244,16 @@ fn path_buf_to_string(path: std::path::PathBuf, label: &str) -> io::Result<Strin
 }
 
 /// Resolves a jump-key label index (as rendered in ui.rs, which skips
-/// `NodeId::Separator` and `NodeId::Group(_)` rows) to the corresponding
+/// `NodeId::Separator(_)`, `NodeId::Header(_)`, and `NodeId::Group(_)` rows) to the corresponding
 /// index into `flat_entries`.
 fn resolve_shortcut_index(flat_entries: &[FlatEntry], shortcut_index: usize) -> Option<usize> {
     flat_entries
         .iter()
         .enumerate()
-        .filter(|(_, e)| e.node_id != NodeId::Separator && !matches!(e.node_id, NodeId::Group(_)))
+        .filter(|(_, e)| {
+            !matches!(e.node_id, NodeId::Separator(_) | NodeId::Header(_))
+                && !matches!(e.node_id.target(), NodeId::Group(_))
+        })
         .nth(shortcut_index)
         .map(|(idx, _)| idx)
 }
@@ -306,6 +309,27 @@ fn extract_group_prefixes(sessions: &[tmux::Session], separator: Option<&str>) -
     prefixes
 }
 
+fn recent_max_age_secs(config: Option<&config::Config>) -> Option<u64> {
+    let recents = config.and_then(|cfg| cfg.recents.as_ref())?;
+    if recents.enabled == Some(true) {
+        return Some(recents.max_age_secs());
+    }
+    None
+}
+
+fn extract_session_id(node_id: &NodeId) -> Option<&String> {
+    match node_id.target() {
+        NodeId::Session(id) => Some(id),
+        NodeId::Window(session_id, _) => Some(session_id),
+        NodeId::Pane(session_id, _, _) => Some(session_id),
+        _ => None,
+    }
+}
+
+fn is_non_selectable(node_id: &NodeId) -> bool {
+    matches!(node_id, NodeId::Separator(_) | NodeId::Header(_))
+}
+
 impl App {
     pub fn new() -> io::Result<Self> {
         let config = config::load_config()?;
@@ -325,11 +349,17 @@ impl App {
         let show_hidden = false;
         let group_sep = config.as_ref().and_then(|c| c.group_name_separator.as_deref());
         let group_prefixes = extract_group_prefixes(&sessions, group_sep);
-        let opened: HashSet<NodeId> = group_prefixes.iter()
+        let recent_age = recent_max_age_secs(config.as_ref());
+        let mut opened: HashSet<NodeId> = group_prefixes.iter()
             .map(|p| NodeId::Group(p.clone()))
             .collect();
+        if recent_age.is_some() {
+            for prefix in group_prefixes.iter() {
+                opened.insert(NodeId::Recent(Box::new(NodeId::Group(prefix.clone()))));
+            }
+        }
         let seen_groups: HashSet<String> = group_prefixes.into_iter().collect();
-        let flat_entries = tree::flatten(&sessions, &windows, &panes, &opened, &pinned, &hidden, show_hidden, group_sep);
+        let flat_entries = tree::flatten(&sessions, &windows, &panes, &opened, &pinned, &hidden, show_hidden, group_sep, recent_age);
         let mut list_state = ListState::default();
         let initial_index = flat_entries
             .iter()
@@ -338,13 +368,13 @@ impl App {
                     windows.iter().any(|w| {
                         w.session_id == s.id
                             && w.active
-                            && e.node_id == NodeId::Window(s.id.clone(), w.id.clone())
+                            && e.node_id.target() == &NodeId::Window(s.id.clone(), w.id.clone())
                     })
                 })
             })
             .or_else(|| {
                 flat_entries.iter().position(|e| {
-                    sessions.iter().any(|s| s.attached && e.node_id == NodeId::Session(s.id.clone()))
+                    sessions.iter().any(|s| s.attached && e.node_id.target() == &NodeId::Session(s.id.clone()))
                 })
             })
             .or_else(|| if flat_entries.is_empty() { None } else { Some(0) });
@@ -496,9 +526,13 @@ impl App {
         self.dead_sessions = compute_dead_sessions(&history_entries, &self.sessions, &self.formatter_cache);
 
         let group_sep = self.config.as_ref().and_then(|c| c.group_name_separator.as_deref());
+        let recent_age = recent_max_age_secs(self.config.as_ref());
         for prefix in extract_group_prefixes(&self.sessions, group_sep) {
             if !self.seen_groups.contains(&prefix) {
                 self.opened.insert(NodeId::Group(prefix.clone()));
+                if recent_age.is_some() {
+                    self.opened.insert(NodeId::Recent(Box::new(NodeId::Group(prefix.clone()))));
+                }
                 self.seen_groups.insert(prefix);
             }
         }
@@ -517,7 +551,9 @@ impl App {
     fn rebuild_flat_entries(&mut self) {
         let sep = self.config.as_ref().and_then(|c| c.group_name_separator.as_deref());
         if self.filter_query.is_empty() {
-            self.flat_entries = tree::flatten(&self.sessions, &self.windows, &self.panes, &self.opened, &self.pinned, &self.hidden, self.show_hidden, sep);
+            let sep = self.config.as_ref().and_then(|c| c.group_name_separator.as_deref());
+            let recent_age = recent_max_age_secs(self.config.as_ref());
+            self.flat_entries = tree::flatten(&self.sessions, &self.windows, &self.panes, &self.opened, &self.pinned, &self.hidden, self.show_hidden, sep, recent_age);
             return;
         }
 
@@ -525,6 +561,7 @@ impl App {
             .into_iter()
             .cloned()
             .collect();
+        let recent_age = recent_max_age_secs(self.config.as_ref());
         let mut flat_entries = tree::flatten(
             &matched_sessions,
             &self.windows,
@@ -534,6 +571,7 @@ impl App {
             &self.hidden,
             self.show_hidden,
             sep,
+            recent_age,
         );
         let dead_refs: Vec<DeadSessionRef<'_>> = self.dead_sessions.iter().map(|d| DeadSessionRef {
             name: &d.name,
@@ -603,8 +641,12 @@ impl App {
         let hi = anchor.max(cursor).min(self.flat_entries.len().saturating_sub(1));
 
         self.marked_windows.clear();
+        let mut seen_window_ids = HashSet::new();
         for entry in self.flat_entries[lo..=hi].iter() {
-            if let NodeId::Window(_, window_id) = &entry.node_id {
+            if let NodeId::Window(_, window_id) = entry.node_id.target() {
+                if !seen_window_ids.insert(window_id.clone()) {
+                    continue;
+                }
                 self.marked_windows.push(window_id.clone());
             }
         }
@@ -972,9 +1014,13 @@ impl App {
             }
         }
         let group_sep = self.config.as_ref().and_then(|c| c.group_name_separator.as_deref());
+        let recent_age = recent_max_age_secs(self.config.as_ref());
         for prefix in extract_group_prefixes(&self.sessions, group_sep) {
             if !self.seen_groups.contains(&prefix) {
                 self.opened.insert(NodeId::Group(prefix.clone()));
+                if recent_age.is_some() {
+                    self.opened.insert(NodeId::Recent(Box::new(NodeId::Group(prefix.clone()))));
+                }
                 self.seen_groups.insert(prefix);
             }
         }
@@ -983,7 +1029,8 @@ impl App {
 
     fn preview_title_for_node(&self, node_id: &NodeId, selected_index: usize) -> String {
         match node_id {
-            NodeId::Separator | NodeId::DeadSession(_) | NodeId::Group(_) => String::new(),
+            NodeId::Recent(inner) => self.preview_title_for_node(inner, selected_index),
+            NodeId::Separator(_) | NodeId::DeadSession(_) | NodeId::Group(_) | NodeId::Header(_) => String::new(),
             NodeId::Session(session_id) => {
                 let session = self.sessions.iter().find(|session| session.id == *session_id);
                 match session {
@@ -999,7 +1046,8 @@ impl App {
 
     fn capture_targets_for_node(&self, node_id: &NodeId) -> Option<Vec<CapturePaneTarget>> {
         match node_id {
-            NodeId::Separator | NodeId::DeadSession(_) | NodeId::Group(_) => None,
+            NodeId::Recent(inner) => self.capture_targets_for_node(inner),
+            NodeId::Separator(_) | NodeId::DeadSession(_) | NodeId::Group(_) | NodeId::Header(_) => None,
             NodeId::Session(session_id) => {
                 let mut panes = Vec::new();
                 for window in self.windows.iter().filter(|window| window.session_id == *session_id) {
@@ -1052,8 +1100,12 @@ impl App {
         };
 
         let node_id = &self.flat_entries[i].node_id;
-        match node_id {
-            NodeId::Separator | NodeId::DeadSession(_) | NodeId::Group(_) => (Vec::new(), 0),
+        self.build_full_preview_from_target(node_id)
+    }
+
+    fn build_full_preview_from_target(&self, node_id: &NodeId) -> (Vec<PreviewFullPane>, usize) {
+        match node_id.target() {
+            NodeId::Separator(_) | NodeId::DeadSession(_) | NodeId::Group(_) | NodeId::Header(_) => (Vec::new(), 0),
             NodeId::Pane(session_id, window_id, pane_id) => {
                 let session = self.sessions.iter().find(|s| s.id == *session_id);
                 let window = self.windows.iter().find(|w| w.id == *window_id);
@@ -1108,6 +1160,7 @@ impl App {
                 (previews, initial_index)
             }
             NodeId::Session(session_id) => self.build_full_preview_for_session(session_id),
+            NodeId::Recent(_) => unreachable!(),
         }
     }
 
@@ -1189,7 +1242,7 @@ impl App {
                     let mut target = i;
                     while target > 0 {
                         target -= 1;
-                        if self.flat_entries[target].node_id != NodeId::Separator {
+                        if !is_non_selectable(&self.flat_entries[target].node_id) {
                             self.list_state.select(Some(target));
                             self.update_preview();
                             if self.mode == Mode::Normal && self.selecting {
@@ -1212,7 +1265,7 @@ impl App {
                     let mut target = i;
                     while target + 1 < self.flat_entries.len() {
                         target += 1;
-                        if self.flat_entries[target].node_id != NodeId::Separator {
+                        if !is_non_selectable(&self.flat_entries[target].node_id) {
                             self.list_state.select(Some(target));
                             self.update_preview();
                             if self.mode == Mode::Normal && self.selecting {
@@ -1228,11 +1281,9 @@ impl App {
                     Some(i) if i < self.flat_entries.len() => i,
                     _ => return,
                 };
-                let session_id = match &self.flat_entries[i].node_id {
-                    NodeId::Session(id) => id.clone(),
-                    NodeId::Window(session_id, _) => session_id.clone(),
-                    NodeId::Pane(session_id, _, _) => session_id.clone(),
-                    NodeId::Separator | NodeId::DeadSession(_) | NodeId::Group(_) => return,
+                let session_id = match extract_session_id(&self.flat_entries[i].node_id) {
+                    Some(session_id) => session_id.clone(),
+                    None => return,
                 };
                 let session_name = match self.sessions.iter().find(|s| s.id == session_id) {
                     Some(s) => s.name.clone(),
@@ -1256,11 +1307,9 @@ impl App {
                     Some(i) if i < self.flat_entries.len() => i,
                     _ => return,
                 };
-                let session_id = match &self.flat_entries[i].node_id {
-                    NodeId::Session(id) => id.clone(),
-                    NodeId::Window(session_id, _) => session_id.clone(),
-                    NodeId::Pane(session_id, _, _) => session_id.clone(),
-                    NodeId::Separator | NodeId::DeadSession(_) | NodeId::Group(_) => return,
+                let session_id = match extract_session_id(&self.flat_entries[i].node_id) {
+                    Some(session_id) => session_id.clone(),
+                    None => return,
                 };
                 let session_name = match self.sessions.iter().find(|s| s.id == session_id) {
                     Some(s) => s.name.clone(),
@@ -2078,7 +2127,7 @@ impl App {
                     Some(i) if i < self.flat_entries.len() => i,
                     _ => return,
                 };
-                let (target, prefill) = match &self.flat_entries[i].node_id {
+                let (target, prefill) = match self.flat_entries[i].node_id.target() {
                     NodeId::Session(id) => {
                         let name = match self.sessions.iter().find(|s| s.id == *id) {
                             Some(s) => s.name.clone(),
@@ -2093,7 +2142,8 @@ impl App {
                         };
                         (RenameTarget::Window(window_id.clone()), name)
                     }
-                    NodeId::Group(_) | NodeId::Separator | NodeId::DeadSession(_) => return,
+                    NodeId::Group(_) | NodeId::Separator(_) | NodeId::DeadSession(_) | NodeId::Header(_) => return,
+                    NodeId::Recent(_) => unreachable!(),
                 };
                 self.renaming_target = Some(target);
                 self.rename_cursor = prefill.chars().count();
@@ -2313,11 +2363,9 @@ impl App {
             Some(i) if i < self.flat_entries.len() => i,
             _ => return,
         };
-        let session_id = match &self.flat_entries[i].node_id {
-            NodeId::Session(id) => id.clone(),
-            NodeId::Window(session_id, _) => session_id.clone(),
-            NodeId::Pane(session_id, _, _) => session_id.clone(),
-            NodeId::Group(_) | NodeId::Separator | NodeId::DeadSession(_) => return,
+        let session_id = match extract_session_id(&self.flat_entries[i].node_id) {
+            Some(session_id) => session_id.clone(),
+            None => return,
         };
         let session_name = match self.sessions.iter().find(|s| s.id == session_id) {
             Some(s) => s.name.clone(),
@@ -2350,14 +2398,14 @@ impl App {
 
         let entry = &self.flat_entries[i];
         let node_id = &entry.node_id;
-        let result = match node_id {
+        let result = match node_id.target() {
             NodeId::Session(id) => tmux::switch_client(id),
             NodeId::Window(session_id, window_id) => tmux::switch_client(session_id)
                 .and_then(|_| tmux::select_window(window_id)),
             NodeId::Pane(session_id, window_id, pane_id) => tmux::switch_client(session_id)
                 .and_then(|_| tmux::select_window(window_id))
                 .and_then(|_| tmux::select_pane(pane_id)),
-            NodeId::Separator | NodeId::Group(_) => return,
+            NodeId::Separator(_) | NodeId::Group(_) | NodeId::Header(_) => return,
             NodeId::DeadSession(name) => {
                 let cwd = match self.dead_sessions.iter().find(|d| d.name == *name) {
                     Some(d) => d.cwd.clone(),
@@ -2366,6 +2414,7 @@ impl App {
                 tmux::new_session_with_actual_name(name, &cwd)
                     .and_then(|created_name| tmux::switch_client(&created_name))
             }
+            NodeId::Recent(_) => unreachable!(),
         };
 
         if result.is_ok() {
@@ -2396,8 +2445,8 @@ impl App {
             _ => return,
         };
 
-        match &self.flat_entries[i].node_id {
-            NodeId::Separator | NodeId::DeadSession(_) | NodeId::Group(_) => return,
+        match self.flat_entries[i].node_id.target() {
+            NodeId::Separator(_) | NodeId::DeadSession(_) | NodeId::Group(_) | NodeId::Header(_) => return,
             _ => {}
         }
 
@@ -2435,7 +2484,7 @@ impl App {
                 let _ = self.refresh();
             }
             ConfirmKillTarget::Node(node_id) => {
-                let is_current_session = match &node_id {
+                let is_current_session = match node_id.target() {
                     NodeId::Session(id) => *id == self.current_session_id,
                     _ => false,
                 };
@@ -2456,11 +2505,12 @@ impl App {
                     return;
                 }
 
-                let result = match &node_id {
+                let result = match node_id.target() {
                     NodeId::Session(id) => tmux::kill_session(id),
                     NodeId::Window(_, window_id) => tmux::kill_window(window_id),
                     NodeId::Pane(_, _, pane_id) => tmux::kill_pane(pane_id),
-                    NodeId::Separator | NodeId::DeadSession(_) | NodeId::Group(_) => return,
+                    NodeId::Separator(_) | NodeId::DeadSession(_) | NodeId::Group(_) | NodeId::Header(_) => return,
+                    NodeId::Recent(_) => unreachable!(),
                 };
 
                 self.mode = Mode::Normal;
@@ -2492,7 +2542,7 @@ impl App {
                 }
             }
             ConfirmKillTarget::Node(node_id) => {
-                let label = match node_id {
+                let label = match node_id.target() {
                     NodeId::Session(id) => {
                         let session = match self.sessions.iter().find(|session| session.id == *id) {
                             Some(session) => session,
@@ -2510,7 +2560,8 @@ impl App {
                     NodeId::Pane(_, _, pane_id) => {
                         format!("pane {}", pane_id)
                     }
-                    NodeId::Separator | NodeId::DeadSession(_) | NodeId::Group(_) => return None,
+                    NodeId::Separator(_) | NodeId::DeadSession(_) | NodeId::Group(_) | NodeId::Header(_) => return None,
+                    NodeId::Recent(_) => unreachable!(),
                 };
                 let label = Self::truncate_confirmation_label(&label);
                 Some(format!("Kill {}?\n[enter] confirm  [esc] cancel", label))
@@ -2549,7 +2600,7 @@ mod shortcut_index_tests {
         // (0) session-a, [separator], (1) session-b
         let flat_entries = vec![
             entry(NodeId::Session("session-a".to_string())),
-            entry(NodeId::Separator),
+            entry(NodeId::Separator(0)),
             entry(NodeId::Session("session-b".to_string())),
         ];
 
