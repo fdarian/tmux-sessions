@@ -243,6 +243,18 @@ fn path_buf_to_string(path: std::path::PathBuf, label: &str) -> io::Result<Strin
     })
 }
 
+/// Resolves a jump-key label index (as rendered in ui.rs, which skips
+/// `NodeId::Separator` and `NodeId::Group(_)` rows) to the corresponding
+/// index into `flat_entries`.
+fn resolve_shortcut_index(flat_entries: &[FlatEntry], shortcut_index: usize) -> Option<usize> {
+    flat_entries
+        .iter()
+        .enumerate()
+        .filter(|(_, e)| e.node_id != NodeId::Separator && !matches!(e.node_id, NodeId::Group(_)))
+        .nth(shortcut_index)
+        .map(|(idx, _)| idx)
+}
+
 fn create_match_result(
     matcher: &SkimMatcherV2,
     query: &str,
@@ -2033,8 +2045,8 @@ impl App {
                 self.mode = Mode::Normal;
             }
             Action::SelectIndex(i) => {
-                if i < self.flat_entries.len() {
-                    self.list_state.select(Some(i));
+                if let Some(idx) = resolve_shortcut_index(&self.flat_entries, i) {
+                    self.list_state.select(Some(idx));
                     self.select_current();
                 }
             }
@@ -2489,5 +2501,56 @@ impl App {
         }
         let prefix: String = label.chars().take(21).collect();
         format!("{}...", prefix)
+    }
+}
+
+#[cfg(test)]
+mod shortcut_index_tests {
+    use super::resolve_shortcut_index;
+    use crate::tree::{FlatEntry, NodeId};
+
+    fn entry(node_id: NodeId) -> FlatEntry {
+        FlatEntry {
+            node_id,
+            depth: 0,
+            has_children: false,
+            is_last_sibling: false,
+            ancestor_is_last: Vec::new(),
+            text: String::new(),
+        }
+    }
+
+    #[test]
+    fn skips_separator_when_resolving_label_index() {
+        // Labels are assigned only to non-Separator, non-Group rows:
+        // (0) session-a, [separator], (1) session-b
+        let flat_entries = vec![
+            entry(NodeId::Session("session-a".to_string())),
+            entry(NodeId::Separator),
+            entry(NodeId::Session("session-b".to_string())),
+        ];
+
+        assert_eq!(resolve_shortcut_index(&flat_entries, 0), Some(0));
+        // Label (1) must resolve to the session AFTER the separator (index 2),
+        // not the separator itself (index 1).
+        assert_eq!(resolve_shortcut_index(&flat_entries, 1), Some(2));
+    }
+
+    #[test]
+    fn skips_group_rows_when_resolving_label_index() {
+        let flat_entries = vec![
+            entry(NodeId::Group("work".to_string())),
+            entry(NodeId::Session("session-a".to_string())),
+            entry(NodeId::Session("session-b".to_string())),
+        ];
+
+        assert_eq!(resolve_shortcut_index(&flat_entries, 0), Some(1));
+        assert_eq!(resolve_shortcut_index(&flat_entries, 1), Some(2));
+    }
+
+    #[test]
+    fn out_of_range_label_resolves_to_none() {
+        let flat_entries = vec![entry(NodeId::Session("session-a".to_string()))];
+        assert_eq!(resolve_shortcut_index(&flat_entries, 5), None);
     }
 }
