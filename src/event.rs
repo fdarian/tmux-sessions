@@ -74,7 +74,9 @@ pub enum Action {
     ConfirmCreate,
     CancelCreate,
     SelectIndex(usize),
+    #[allow(dead_code)]
     ExitFilter,
+    DetachFilter,
     StartRename,
     RenameChar(char),
     RenameBackspace,
@@ -158,7 +160,7 @@ pub fn map_key(key: KeyEvent, mode: &Mode) -> Action {
             _ => Action::None,
         },
         Mode::Filtering => match (key.code, key.modifiers) {
-            (KeyCode::Esc, _) => Action::ExitFilter,
+            (KeyCode::Esc, _) => Action::DetachFilter,
             (KeyCode::Enter, _) => Action::Select,
             (KeyCode::Char('H'), KeyModifiers::NONE | KeyModifiers::SHIFT) => Action::ToggleHide,
             (KeyCode::Up, _) | (KeyCode::Char('p'), KeyModifiers::CONTROL) => Action::MoveUp,

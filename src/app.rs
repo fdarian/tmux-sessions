@@ -516,6 +516,21 @@ impl App {
         }
     }
 
+    fn clear_filter(&mut self) {
+        let selected_node_id = self.list_state.selected()
+            .and_then(|i| self.flat_entries.get(i))
+            .map(|e| e.node_id.clone());
+        self.filter_query = String::new();
+        self.filter_cursor = 0;
+        self.mode = Mode::Normal;
+        self.rebuild_flat_entries();
+        let new_index = selected_node_id
+            .and_then(|id| self.flat_entries.iter().position(|e| e.node_id == id))
+            .unwrap_or(0);
+        self.list_state.select(Some(new_index));
+        self.update_preview();
+    }
+
     fn reset_move_window_state(&mut self) {
         self.move_query = String::new();
         self.move_cursor = 0;
@@ -1127,6 +1142,8 @@ impl App {
                     self.marked_windows.clear();
                     self.selecting = false;
                     self.selection_anchor = None;
+                } else if !self.filter_query.is_empty() {
+                    self.clear_filter();
                 } else {
                     self.should_quit = true;
                 }
@@ -1375,11 +1392,11 @@ impl App {
             }
             Action::EnterFilter => {
                 self.mode = Mode::Filtering;
-                self.filter_query = String::new();
-                self.filter_cursor = 0;
-                self.list_state.select(Some(0));
-                self.rebuild_flat_entries();
+                self.filter_cursor = self.filter_query.chars().count();
                 self.update_preview();
+            }
+            Action::DetachFilter => {
+                self.mode = Mode::Normal;
             }
             Action::ToggleMarkWindow => {
                 if !self.selecting {
@@ -1598,18 +1615,7 @@ impl App {
                 self.filter_cursor = self.filter_query.chars().count();
             }
             Action::ExitFilter => {
-                let selected_node_id = self.list_state.selected()
-                    .and_then(|i| self.flat_entries.get(i))
-                    .map(|e| e.node_id.clone());
-                self.filter_query = String::new();
-                self.filter_cursor = 0;
-                self.mode = Mode::Normal;
-                self.rebuild_flat_entries();
-                let new_index = selected_node_id
-                    .and_then(|id| self.flat_entries.iter().position(|e| e.node_id == id))
-                    .unwrap_or(0);
-                self.list_state.select(Some(new_index));
-                self.update_preview();
+                self.clear_filter();
             }
             Action::MoveWindowChar(c) => {
                 let byte_offset = self.move_query.char_indices()

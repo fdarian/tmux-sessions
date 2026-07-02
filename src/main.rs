@@ -239,7 +239,7 @@ fn main() {
                     app.handle_action(action);
                     dispatch_capture_request(&mut app, &capture_request_tx);
                     queue_format_requests(&app, &format_request_tx);
-                    if app.mode == Mode::Filtering {
+                    if app.mode == Mode::Filtering || !app.filter_query.is_empty() {
                         queue_dead_format_requests(&app, &format_request_tx);
                     }
                 }
