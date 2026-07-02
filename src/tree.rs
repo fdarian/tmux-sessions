@@ -15,7 +15,8 @@ fn session_text(session: &tmux::Session) -> String {
 }
 
 fn session_text_with_suffix(session: &tmux::Session, separator: &str) -> String {
-    let suffix = session.display_name
+    let suffix = session
+        .display_name
         .split_once(separator)
         .expect("caller must guarantee separator is present in display_name")
         .1;
@@ -84,15 +85,16 @@ fn flatten_session_list(
             is_last_sibling: session_is_last_sibling,
             ancestor_is_last: vec![],
             text: session_text(session),
-
         });
 
         if !opened.contains(&NodeId::Session(session.id.clone())) {
             continue;
         }
 
-        let session_windows: Vec<&tmux::Window> =
-            windows.iter().filter(|w| w.session_id == session.id).collect();
+        let session_windows: Vec<&tmux::Window> = windows
+            .iter()
+            .filter(|w| w.session_id == session.id)
+            .collect();
 
         for (wi, window) in session_windows.iter().enumerate() {
             let window_is_last_sibling = wi == session_windows.len() - 1;
@@ -107,7 +109,6 @@ fn flatten_session_list(
                 is_last_sibling: window_is_last_sibling,
                 ancestor_is_last: vec![],
                 text: window_text(window),
-    
             });
 
             if !opened.contains(&NodeId::Window(session.id.clone(), window.id.clone())) {
@@ -123,17 +124,12 @@ fn flatten_session_list(
                 let pane_is_last_sibling = pi == window_panes.len() - 1;
 
                 entries.push(FlatEntry {
-                    node_id: NodeId::Pane(
-                        session.id.clone(),
-                        window.id.clone(),
-                        pane.id.clone(),
-                    ),
+                    node_id: NodeId::Pane(session.id.clone(), window.id.clone(), pane.id.clone()),
                     depth: 2,
                     has_children: false,
                     is_last_sibling: pane_is_last_sibling,
                     ancestor_is_last: vec![window_is_last_sibling],
                     text: pane_text(pane),
-        
                 });
             }
         }
@@ -159,15 +155,16 @@ fn flatten_group_sessions(
             is_last_sibling: session_is_last,
             ancestor_is_last: vec![],
             text: session_text_with_suffix(session, separator),
-
         });
 
         if !opened.contains(&NodeId::Session(session.id.clone())) {
             continue;
         }
 
-        let session_windows: Vec<&tmux::Window> =
-            windows.iter().filter(|w| w.session_id == session.id).collect();
+        let session_windows: Vec<&tmux::Window> = windows
+            .iter()
+            .filter(|w| w.session_id == session.id)
+            .collect();
 
         for (wi, window) in session_windows.iter().enumerate() {
             let window_is_last = wi == session_windows.len() - 1;
@@ -182,7 +179,6 @@ fn flatten_group_sessions(
                 is_last_sibling: window_is_last,
                 ancestor_is_last: vec![session_is_last],
                 text: window_text(window),
-    
             });
 
             if !opened.contains(&NodeId::Window(session.id.clone(), window.id.clone())) {
@@ -197,17 +193,12 @@ fn flatten_group_sessions(
             for (pi, pane) in window_panes.iter().enumerate() {
                 let pane_is_last = pi == window_panes.len() - 1;
                 entries.push(FlatEntry {
-                    node_id: NodeId::Pane(
-                        session.id.clone(),
-                        window.id.clone(),
-                        pane.id.clone(),
-                    ),
+                    node_id: NodeId::Pane(session.id.clone(), window.id.clone(), pane.id.clone()),
                     depth: 3,
                     has_children: false,
                     is_last_sibling: pane_is_last,
                     ancestor_is_last: vec![session_is_last, window_is_last],
                     text: pane_text(pane),
-        
                 });
             }
         }
@@ -244,14 +235,17 @@ fn flatten_grouped(
     // Sessions whose display_name exactly matches a group prefix become peer rows:
     // rendered as a normal session row immediately before their group header.
     let mut peer_session: HashMap<String, &tmux::Session> = HashMap::new();
-    let truly_ungrouped: Vec<&tmux::Session> = ungrouped.into_iter().filter(|session| {
-        if group_order.contains(&session.display_name) {
-            peer_session.insert(session.display_name.clone(), *session);
-            false
-        } else {
-            true
-        }
-    }).collect();
+    let truly_ungrouped: Vec<&tmux::Session> = ungrouped
+        .into_iter()
+        .filter(|session| {
+            if group_order.contains(&session.display_name) {
+                peer_session.insert(session.display_name.clone(), *session);
+                false
+            } else {
+                true
+            }
+        })
+        .collect();
 
     for prefix in &group_order {
         let group_sessions = group_map.get(prefix).unwrap();
@@ -344,12 +338,15 @@ pub fn flatten(
     let mut entries = Vec::new();
 
     let is_visible = |name: &String| show_hidden || !hidden.contains(name);
-    let pinned_sessions: Vec<&tmux::Session> = pinned.iter()
+    let pinned_sessions: Vec<&tmux::Session> = pinned
+        .iter()
         .filter_map(|name| sessions.iter().find(|s| s.name == *name))
         .filter(|s| is_visible(&s.name))
         .collect();
-    let unpinned_sessions: Vec<&tmux::Session> =
-        sessions.iter().filter(|s| !pinned.contains(&s.name) && is_visible(&s.name)).collect();
+    let unpinned_sessions: Vec<&tmux::Session> = sessions
+        .iter()
+        .filter(|s| !pinned.contains(&s.name) && is_visible(&s.name))
+        .collect();
 
     // Pinned always render flat at the top, regardless of grouping.
     flatten_session_list(&pinned_sessions, windows, panes, opened, &mut entries);
@@ -362,17 +359,19 @@ pub fn flatten(
             is_last_sibling: false,
             ancestor_is_last: vec![],
             text: String::new(),
-
         });
     }
 
     match group_separator {
         Some(sep) => flatten_grouped(
-            &unpinned_sessions, windows, panes, opened, &mut entries, sep,
+            &unpinned_sessions,
+            windows,
+            panes,
+            opened,
+            &mut entries,
+            sep,
         ),
-        None => flatten_session_list(
-            &unpinned_sessions, windows, panes, opened, &mut entries,
-        ),
+        None => flatten_session_list(&unpinned_sessions, windows, panes, opened, &mut entries),
     }
 
     entries
@@ -413,53 +412,46 @@ pub fn fuzzy_match_multi(
     Some((total_score, match_indices))
 }
 
-pub fn flatten_filtered(
-    sessions: &[tmux::Session],
-    windows: &[tmux::Window],
-    dead_sessions: &[DeadSessionRef<'_>],
+pub fn match_live_sessions<'a>(
+    sessions: &'a [tmux::Session],
     query: &str,
-) -> Vec<FlatEntry> {
+) -> Vec<&'a tmux::Session> {
     let matcher = fuzzy_matcher::skim::SkimMatcherV2::default();
-    let mut scored: Vec<(i64, FlatEntry)> = Vec::new();
+    let mut matched_sessions = Vec::new();
 
     for session in sessions.iter() {
         let text = session_text(session);
-        if let Some((score, _)) = fuzzy_match_multi(&matcher, query, &text) {
-            let has_children = windows.iter().any(|w| w.session_id == session.id);
-            scored.push((score, FlatEntry {
-                node_id: NodeId::Session(session.id.clone()),
-                depth: 0,
-                has_children,
-                is_last_sibling: false,
-                ancestor_is_last: vec![],
-                text,
-    
-            }));
+        if fuzzy_match_multi(&matcher, query, &text).is_some() {
+            matched_sessions.push(session);
         }
     }
 
-    scored.sort_by(|a, b| b.0.cmp(&a.0));
+    matched_sessions
+}
 
+pub fn match_dead_sessions(dead_sessions: &[DeadSessionRef<'_>], query: &str) -> Vec<FlatEntry> {
+    let matcher = fuzzy_matcher::skim::SkimMatcherV2::default();
     let mut dead_scored: Vec<(i64, u64, FlatEntry)> = Vec::new();
     for dead in dead_sessions.iter() {
         let text = format!("{}: (dead)", dead.display_name);
         if let Some((score, _)) = fuzzy_match_multi(&matcher, query, &text) {
-            dead_scored.push((score, dead.last_seen, FlatEntry {
-                node_id: NodeId::DeadSession(dead.name.to_string()),
-                depth: 0,
-                has_children: false,
-                is_last_sibling: false,
-                ancestor_is_last: vec![],
-                text,
-    
-            }));
+            dead_scored.push((
+                score,
+                dead.last_seen,
+                FlatEntry {
+                    node_id: NodeId::DeadSession(dead.name.to_string()),
+                    depth: 0,
+                    has_children: false,
+                    is_last_sibling: false,
+                    ancestor_is_last: vec![],
+                    text,
+                },
+            ));
         }
     }
     dead_scored.sort_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)));
 
-    let mut result: Vec<FlatEntry> = scored.into_iter().map(|(_, entry)| entry).collect();
-    result.extend(dead_scored.into_iter().map(|(_, _, entry)| entry));
-    result
+    dead_scored.into_iter().map(|(_, _, entry)| entry).collect()
 }
 
 pub fn shortcut_label(index: usize) -> Option<String> {

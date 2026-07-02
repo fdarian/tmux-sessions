@@ -515,17 +515,49 @@ impl App {
     }
 
     fn rebuild_flat_entries(&mut self) {
+        let sep = self.config.as_ref().and_then(|c| c.group_name_separator.as_deref());
         if self.filter_query.is_empty() {
-            let sep = self.config.as_ref().and_then(|c| c.group_name_separator.as_deref());
             self.flat_entries = tree::flatten(&self.sessions, &self.windows, &self.panes, &self.opened, &self.pinned, &self.hidden, self.show_hidden, sep);
-        } else {
-            let dead_refs: Vec<DeadSessionRef<'_>> = self.dead_sessions.iter().map(|d| DeadSessionRef {
-                name: &d.name,
-                display_name: &d.display_name,
-                last_seen: d.last_seen,
-            }).collect();
-            self.flat_entries = tree::flatten_filtered(&self.sessions, &self.windows, &dead_refs, &self.filter_query);
+            return;
         }
+
+        let matched_sessions: Vec<tmux::Session> = tree::match_live_sessions(&self.sessions, &self.filter_query)
+            .into_iter()
+            .cloned()
+            .collect();
+        let mut flat_entries = tree::flatten(
+            &matched_sessions,
+            &self.windows,
+            &self.panes,
+            &self.opened,
+            &self.pinned,
+            &self.hidden,
+            self.show_hidden,
+            sep,
+        );
+        let dead_refs: Vec<DeadSessionRef<'_>> = self.dead_sessions.iter().map(|d| DeadSessionRef {
+            name: &d.name,
+            display_name: &d.display_name,
+            last_seen: d.last_seen,
+        }).collect();
+        let matched_dead_entries = tree::match_dead_sessions(&dead_refs, &self.filter_query);
+        flat_entries.extend(matched_dead_entries);
+        self.flat_entries = flat_entries;
+    }
+
+    fn clear_filter(&mut self) {
+        let selected_node_id = self.list_state.selected()
+            .and_then(|i| self.flat_entries.get(i))
+            .map(|e| e.node_id.clone());
+        self.filter_query = String::new();
+        self.filter_cursor = 0;
+        self.mode = Mode::Normal;
+        self.rebuild_flat_entries();
+        let new_index = selected_node_id
+            .and_then(|id| self.flat_entries.iter().position(|e| e.node_id == id))
+            .unwrap_or(0);
+        self.list_state.select(Some(new_index));
+        self.update_preview();
     }
 
     fn reset_move_window_state(&mut self) {
@@ -1139,6 +1171,8 @@ impl App {
                     self.marked_windows.clear();
                     self.selecting = false;
                     self.selection_anchor = None;
+                } else if !self.filter_query.is_empty() {
+                    self.clear_filter();
                 } else {
                     self.should_quit = true;
                 }
@@ -1387,11 +1421,11 @@ impl App {
             }
             Action::EnterFilter => {
                 self.mode = Mode::Filtering;
-                self.filter_query = String::new();
-                self.filter_cursor = 0;
-                self.list_state.select(Some(0));
-                self.rebuild_flat_entries();
+                self.filter_cursor = self.filter_query.chars().count();
                 self.update_preview();
+            }
+            Action::DetachFilter => {
+                self.mode = Mode::Normal;
             }
             Action::ToggleMarkWindow => {
                 if !self.selecting {
@@ -1610,18 +1644,7 @@ impl App {
                 self.filter_cursor = self.filter_query.chars().count();
             }
             Action::ExitFilter => {
-                let selected_node_id = self.list_state.selected()
-                    .and_then(|i| self.flat_entries.get(i))
-                    .map(|e| e.node_id.clone());
-                self.filter_query = String::new();
-                self.filter_cursor = 0;
-                self.mode = Mode::Normal;
-                self.rebuild_flat_entries();
-                let new_index = selected_node_id
-                    .and_then(|id| self.flat_entries.iter().position(|e| e.node_id == id))
-                    .unwrap_or(0);
-                self.list_state.select(Some(new_index));
-                self.update_preview();
+                self.clear_filter();
             }
             Action::MoveWindowChar(c) => {
                 let byte_offset = self.move_query.char_indices()
