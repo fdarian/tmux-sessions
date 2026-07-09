@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::app::App;
+use crate::event::Mode;
 use crate::history::HistoryEntry;
 use crate::tmux;
 use crate::tree::NodeId;
@@ -57,6 +58,11 @@ impl App {
             if dead.name == raw_name {
                 dead.display_name = formatted.clone();
             }
+        }
+        if self.mode == Mode::CreateSession {
+            let selected = self.create_selected;
+            self.rebuild_create_candidates();
+            self.create_selected = selected.min(self.create_candidates.len().saturating_sub(1));
         }
         let group_sep = self
             .config

@@ -19,7 +19,7 @@ impl App {
         self.create_load_error = None;
     }
 
-    fn rebuild_create_candidates(&mut self) {
+    pub(crate) fn rebuild_create_candidates(&mut self) {
         let matcher = SkimMatcherV2::default();
         let mut candidates = Vec::new();
 
