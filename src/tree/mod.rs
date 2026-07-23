@@ -20,8 +20,7 @@ fn session_text_with_suffix(session: &tmux::Session, separator: &str) -> String 
     let suffix = session
         .display_name
         .split_once(separator)
-        .expect("caller must guarantee separator is present in display_name")
-        .1;
+        .map_or("@", |(_, suffix)| suffix);
     let mut text = format!("{}: {} windows", suffix, session.window_count);
     if session.attached {
         text.push_str(" (attached)");

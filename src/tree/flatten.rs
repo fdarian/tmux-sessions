@@ -144,67 +144,10 @@ pub fn flatten_grouped(
 
     for prefix in &group_order {
         let group_sessions = group_map.get(prefix).expect("group must exist");
-        let count = group_sessions.len();
+        let peer = peer_session.get(prefix).copied();
+        let count = group_sessions.len() + peer.is_some() as usize;
         let group_node_id = maybe_wrap_recent(NodeId::Group(prefix.clone()), wrap_recent);
         let is_expanded = opened.contains(&group_node_id);
-
-        if let Some(peer) = peer_session.get(prefix).copied() {
-            let has_children = windows.iter().any(|w| w.session_id == peer.id);
-            let session_node_id = NodeId::Session(peer.id.clone());
-            let opened_session_node_id = maybe_wrap_recent(session_node_id.clone(), wrap_recent);
-            entries.push(FlatEntry {
-                node_id: opened_session_node_id.clone(),
-                depth: 0,
-                has_children,
-                is_last_sibling: false,
-                ancestor_is_last: vec![],
-                text: session_text(peer),
-            });
-
-            if opened.contains(&opened_session_node_id) {
-                let peer_windows: Vec<&tmux::Window> =
-                    windows.iter().filter(|w| w.session_id == peer.id).collect();
-                for (wi, window) in peer_windows.iter().enumerate() {
-                    let window_is_last = wi == peer_windows.len() - 1;
-                    let has_win_children = panes
-                        .iter()
-                        .any(|p| p.session_id == peer.id && p.window_id == window.id);
-                    let window_node_id = NodeId::Window(peer.id.clone(), window.id.clone());
-                    let opened_window_node_id =
-                        maybe_wrap_recent(window_node_id.clone(), wrap_recent);
-                    entries.push(FlatEntry {
-                        node_id: opened_window_node_id.clone(),
-                        depth: 1,
-                        has_children: has_win_children,
-                        is_last_sibling: window_is_last,
-                        ancestor_is_last: vec![],
-                        text: window_text(window),
-                    });
-
-                    if !opened.contains(&opened_window_node_id) {
-                        continue;
-                    }
-
-                    let window_panes: Vec<&tmux::Pane> = panes
-                        .iter()
-                        .filter(|p| p.session_id == peer.id && p.window_id == window.id)
-                        .collect();
-                    for (pi, pane) in window_panes.iter().enumerate() {
-                        let pane_is_last = pi == window_panes.len() - 1;
-                        let pane_node_id =
-                            NodeId::Pane(peer.id.clone(), window.id.clone(), pane.id.clone());
-                        entries.push(FlatEntry {
-                            node_id: maybe_wrap_recent(pane_node_id, wrap_recent),
-                            depth: 2,
-                            has_children: false,
-                            is_last_sibling: pane_is_last,
-                            ancestor_is_last: vec![window_is_last],
-                            text: pane_text(pane),
-                        });
-                    }
-                }
-            }
-        }
 
         entries.push(FlatEntry {
             node_id: group_node_id,
@@ -216,8 +159,12 @@ pub fn flatten_grouped(
         });
 
         if is_expanded {
+            let members: Vec<&tmux::Session> = peer
+                .into_iter()
+                .chain(group_sessions.iter().copied())
+                .collect();
             flatten_group_sessions(
-                group_sessions,
+                &members,
                 windows,
                 panes,
                 opened,
