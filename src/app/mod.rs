@@ -31,7 +31,7 @@ pub use move_window::MoveCandidate;
 pub use preview::{CaptureRequest, PendingCaptureRequest, PreviewFullPane, PreviewPane};
 pub use rename::RenameTarget;
 pub use sessions::DeadSession;
-pub use util::{create_match_result, current_unix_secs, extract_group_prefixes, extract_session_id, is_non_selectable, path_buf_to_string, recent_max_age_secs, resolve_shortcut_index};
+pub use util::{create_match_result, current_unix_secs, extract_group_prefixes, extract_session_id, first_selectable_index, is_non_selectable, path_buf_to_string, recent_max_age_secs, resolve_shortcut_index};
 pub use persist::{load_hidden, load_pins, save_hidden, save_pins};
 
 pub struct App {

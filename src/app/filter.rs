@@ -14,8 +14,8 @@ impl App {
         self.rebuild_flat_entries();
         let new_index = selected_node_id
             .and_then(|id| self.flat_entries.iter().position(|e| e.node_id == id))
-            .unwrap_or(0);
-        self.list_state.select(Some(new_index));
+            .or_else(|| crate::app::first_selectable_index(&self.flat_entries));
+        self.list_state.select(new_index);
         self.update_preview();
     }
 
@@ -39,7 +39,7 @@ impl App {
         self.filter_query.insert(byte_offset, c);
         self.filter_cursor += 1;
         self.rebuild_flat_entries();
-        self.list_state.select(Some(0));
+        self.list_state.select(crate::app::first_selectable_index(&self.flat_entries));
         self.update_preview();
     }
 
@@ -60,7 +60,7 @@ impl App {
             self.filter_query.drain(byte_before..byte_at);
             self.filter_cursor -= 1;
             self.rebuild_flat_entries();
-            self.list_state.select(Some(0));
+            self.list_state.select(crate::app::first_selectable_index(&self.flat_entries));
             self.update_preview();
         }
     }
@@ -82,7 +82,7 @@ impl App {
                 .unwrap_or(self.filter_query.len());
             self.filter_query.drain(byte_at..byte_next);
             self.rebuild_flat_entries();
-            self.list_state.select(Some(0));
+            self.list_state.select(crate::app::first_selectable_index(&self.flat_entries));
             self.update_preview();
         }
     }
@@ -111,7 +111,7 @@ impl App {
         self.filter_query.drain(start_byte..end_byte);
         self.filter_cursor = pos;
         self.rebuild_flat_entries();
-        self.list_state.select(Some(0));
+        self.list_state.select(crate::app::first_selectable_index(&self.flat_entries));
         self.update_preview();
     }
 
@@ -125,7 +125,7 @@ impl App {
         self.filter_query.drain(..byte_offset);
         self.filter_cursor = 0;
         self.rebuild_flat_entries();
-        self.list_state.select(Some(0));
+        self.list_state.select(crate::app::first_selectable_index(&self.flat_entries));
         self.update_preview();
     }
 
@@ -138,7 +138,7 @@ impl App {
             .unwrap_or(self.filter_query.len());
         self.filter_query.truncate(byte_offset);
         self.rebuild_flat_entries();
-        self.list_state.select(Some(0));
+        self.list_state.select(crate::app::first_selectable_index(&self.flat_entries));
         self.update_preview();
     }
 

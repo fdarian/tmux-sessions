@@ -87,6 +87,10 @@ pub fn is_non_selectable(node_id: &NodeId) -> bool {
     matches!(node_id, NodeId::Separator(_) | NodeId::Header(_))
 }
 
+pub fn first_selectable_index(flat_entries: &[FlatEntry]) -> Option<usize> {
+    flat_entries.iter().position(|e| !is_non_selectable(&e.node_id))
+}
+
 #[cfg(test)]
 mod shortcut_index_tests {
     use super::resolve_shortcut_index;
