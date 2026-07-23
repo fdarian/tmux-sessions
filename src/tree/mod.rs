@@ -202,10 +202,23 @@ fn flatten_recents_grouped(
         ungrouped.push(*session);
     }
 
+    let mut peer_session: HashMap<String, &tmux::Session> = HashMap::new();
+    let mut top_level_ungrouped: Vec<&tmux::Session> = ungrouped
+        .into_iter()
+        .filter(|session| {
+            if group_map.contains_key(&session.display_name) {
+                peer_session.insert(session.display_name.clone(), *session);
+                false
+            } else {
+                true
+            }
+        })
+        .collect();
+
     for group_sessions in group_map.values_mut() {
         group_sessions.sort_by(|a, b| b.activity.cmp(&a.activity));
     }
-    ungrouped.sort_by(|a, b| b.activity.cmp(&a.activity));
+    top_level_ungrouped.sort_by(|a, b| b.activity.cmp(&a.activity));
 
     let mut top_level_groups: Vec<(String, u64)> = group_map
         .iter()
@@ -214,14 +227,13 @@ fn flatten_recents_grouped(
                 .1
                 .iter()
                 .map(|session| session.activity)
+                .chain(peer_session.get(entry.0).map(|peer| peer.activity))
                 .max()
                 .unwrap_or(0);
             (entry.0.clone(), max_activity)
         })
         .collect();
     top_level_groups.sort_by(|a, b| b.1.cmp(&a.1));
-
-    let top_level_ungrouped: Vec<&tmux::Session> = ungrouped;
 
     let mut group_index = 0usize;
     let mut ungrouped_index = 0usize;
@@ -238,6 +250,8 @@ fn flatten_recents_grouped(
         if use_group {
             let prefix = &top_level_groups[group_index].0;
             let group_sessions = group_map.get(prefix).expect("recent group must exist");
+            let peer = peer_session.get(prefix).copied();
+            let count = group_sessions.len() + peer.is_some() as usize;
             let group_node_id = NodeId::Recent(Box::new(NodeId::Group(prefix.clone())));
             entries.push(FlatEntry {
                 node_id: group_node_id.clone(),
@@ -245,11 +259,15 @@ fn flatten_recents_grouped(
                 has_children: true,
                 is_last_sibling: false,
                 ancestor_is_last: vec![],
-                text: format!("{} ({})", prefix, group_sessions.len()),
+                text: format!("{} ({})", prefix, count),
             });
             if opened.contains(&group_node_id) {
+                let members: Vec<&tmux::Session> = peer
+                    .into_iter()
+                    .chain(group_sessions.iter().copied())
+                    .collect();
                 flatten_group_sessions(
-                    group_sessions,
+                    &members,
                     windows,
                     panes,
                     opened,
