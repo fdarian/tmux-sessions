@@ -46,7 +46,7 @@ Sessions start with raw names. `formatter_cache: HashMap<String, String>` is in-
 - **No destructuring**: Access struct fields directly (`obj.field`), never `let { field } = obj`
 - **No dummy/fallback values**: Propagate errors properly, don't use `unwrap_or("")` style fallbacks
 - **Flat-entry model**: Tree is flattened into `Vec<FlatEntry>` based on which nodes are in the `opened` set, rebuilt on expand/collapse/refresh
-- **NodeId**: Enum with `Group(prefix)` / `Session(id)` / `Window(session_id, window_id)` / `Pane(session_id, window_id, pane_id)` — used as tree identifier and for resolving actions; `Group` nodes are no-ops for select/kill/pin
+- **NodeId**: Enum with `Group(prefix)` / `Session(id)` / `Window(session_id, window_id)` / `Pane(session_id, window_id, pane_id)` — used as tree identifier and for resolving actions; `Group` nodes are no-ops for kill/pin. `Enter` on a `Group` switches to its `@` peer session (if one exists), same as pressing `Enter` on the `@` row directly.
 - **Tree rendering**: Manual connector characters (`├─>`, `└─>`, `│`) and `+`/`-` symbols matching tmux's native choose-tree
 - **Mode-style**: tmux mode-style is read at startup to derive `highlight_style` and `primary_color`
 
