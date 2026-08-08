@@ -301,5 +301,5 @@ pub struct DeadSessionRef<'a> {
 }
 
 pub use flatten::flatten;
-pub use format::format_line;
+pub use format::{connector_prefix, format_line};
 pub use matching::{fuzzy_match_multi, match_dead_sessions, match_live_sessions};

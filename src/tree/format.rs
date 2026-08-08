@@ -12,6 +12,34 @@ pub fn shortcut_label(index: usize) -> Option<String> {
     }
 }
 
+/// Builds the indent + branch-connector prefix for a tree row at `depth`,
+/// using `ancestor_is_last` to decide between a blank gap and a vertical
+/// bar at each ancestor level, and `is_last_sibling` to pick the row's own
+/// connector. This is the tree-rendering convention shared by the session
+/// tree and the process monitor's tree — the session tree owns it, other
+/// views borrow it via `crate::tree::connector_prefix`.
+pub fn connector_prefix(depth: u8, ancestor_is_last: &[bool], is_last_sibling: bool) -> String {
+    if depth == 0 {
+        return String::new();
+    }
+
+    let mut prefix = String::new();
+    for d in 0..(depth - 1) {
+        if ancestor_is_last[d as usize] {
+            prefix.push_str("    ");
+        } else {
+            prefix.push_str("\u{2502}   ");
+        }
+    }
+
+    if is_last_sibling {
+        prefix.push_str("\u{2514}\u{2500}> ");
+    } else {
+        prefix.push_str("\u{251C}\u{2500}> ");
+    }
+    prefix
+}
+
 pub fn format_line(
     entry: &FlatEntry,
     line_index: usize,
@@ -40,21 +68,11 @@ pub fn format_line(
     };
     let mut result = format!("{:<width$} ", key_str, width = key_width);
 
-    if entry.depth > 0 {
-        for d in 0..(entry.depth - 1) {
-            if entry.ancestor_is_last[d as usize] {
-                result.push_str("    ");
-            } else {
-                result.push_str("\u{2502}   ");
-            }
-        }
-
-        if entry.is_last_sibling {
-            result.push_str("\u{2514}\u{2500}> ");
-        } else {
-            result.push_str("\u{251C}\u{2500}> ");
-        }
-    }
+    result.push_str(&connector_prefix(
+        entry.depth,
+        &entry.ancestor_is_last,
+        entry.is_last_sibling,
+    ));
 
     if entry.has_children {
         if is_expanded {

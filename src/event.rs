@@ -250,6 +250,8 @@ pub fn map_key(key: KeyEvent, mode: &Mode) -> Action {
             (KeyCode::Esc, _) | (KeyCode::Char('q'), _) => Action::ExitMonitor,
             (KeyCode::Char('k'), KeyModifiers::NONE) | (KeyCode::Up, KeyModifiers::NONE) => Action::MoveUp,
             (KeyCode::Char('j'), KeyModifiers::NONE) | (KeyCode::Down, KeyModifiers::NONE) => Action::MoveDown,
+            (KeyCode::Char('h'), _) | (KeyCode::Left, _) => Action::CollapseOrParent,
+            (KeyCode::Char('l'), _) | (KeyCode::Right, _) => Action::ExpandOrChild,
             (KeyCode::Char('s'), _) => Action::ToggleMonitorSort,
             (KeyCode::Char(' '), _) => Action::OpenProcessDetail,
             (KeyCode::Enter, _) => Action::Select,

@@ -21,7 +21,7 @@ use crate::config;
 use crate::create::{CreateCandidate, CreateTab, WorktreeEntry, ZoxideEntry};
 use crate::event::{Action, Mode};
 use crate::history;
-use crate::procs::ProcessRow;
+use crate::procs::{MonitorEntry, ProcessRow};
 use crate::tmux;
 use crate::tree::{self, DeadSessionRef, FlatEntry, NodeId};
 
@@ -83,6 +83,8 @@ pub struct App {
     pub create_load_error: Option<String>,
     pub dead_sessions: Vec<DeadSession>,
     pub monitor_rows: Vec<ProcessRow>,
+    pub monitor_entries: Vec<MonitorEntry>,
+    pub monitor_collapsed: HashSet<u32>,
     pub monitor_selected: usize,
     pub monitor_sort: MonitorSort,
     pub monitor_list_state: ListState,
@@ -194,6 +196,8 @@ impl App {
             create_load_error: None,
             dead_sessions,
             monitor_rows: Vec::new(),
+            monitor_entries: Vec::new(),
+            monitor_collapsed: HashSet::new(),
             monitor_selected: 0,
             monitor_sort: MonitorSort::Mem,
             monitor_list_state: ListState::default(),

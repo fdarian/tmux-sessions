@@ -1,6 +1,10 @@
+mod tree;
+
 use std::collections::HashMap;
 use std::io;
 use std::process::Command;
+
+pub use tree::{flatten_process_tree, MonitorEntry};
 
 #[derive(Clone)]
 pub struct PaneContext {
@@ -23,6 +27,7 @@ pub struct ProcessAncestor {
 #[derive(Clone)]
 pub struct ProcessRow {
     pub pid: u32,
+    pub ppid: u32,
     pub command: String,
     pub rss_kb: u64,
     pub pcpu: f64,
@@ -255,6 +260,7 @@ pub fn collect_process_rows() -> io::Result<Vec<ProcessRow>> {
         )?;
         rows.push(ProcessRow {
             pid: entry.pid,
+            ppid: entry.ppid,
             command: entry.command.clone(),
             rss_kb: entry.rss_kb,
             pcpu: entry.pcpu,

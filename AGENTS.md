@@ -17,7 +17,7 @@ src/
   history.rs — recently-closed session history (~/.config/tmux-sessions/history.json): load/prune, upsert live sessions
   ui.rs      — render: vertical layout, List-based tree, preview, confirmation overlay
   event.rs   — map KeyEvent + Mode → Action enum
-  procs.rs   — process monitor: pane enumeration, ps parsing, subtree ownership
+  procs/     — process monitor: pane enumeration, ps parsing, subtree ownership (mod.rs); procs/tree.rs holds MonitorEntry + flatten_process_tree, the pure ppid-nesting/subtree-sort/collapse logic behind the monitor's tree view
 ```
 
 ### Threading / event model
@@ -154,6 +154,8 @@ In create-session mode:
 In process monitor mode:
 - `j` / `↓` — move down
 - `k` / `↑` — move up
+- `h` / `←` — collapse selected, or jump to parent if already collapsed
+- `l` / `→` — expand selected, or descend to first child if already expanded
 - `s` — toggle sort (MEM / CPU)
 - `Space` — process detail popup
 - `Enter` — switch to owning pane

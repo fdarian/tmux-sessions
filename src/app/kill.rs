@@ -13,11 +13,11 @@ pub enum ConfirmKillTarget {
 impl App {
     fn start_kill(&mut self) {
         if self.mode == Mode::Monitor {
-            let row = match self.monitor_rows.get(self.monitor_selected) {
-                Some(row) => row,
+            let (pid, command) = match self.monitor_selected_row() {
+                Some(row) => (row.pid, row.command.clone()),
                 None => return,
             };
-            self.confirming_process = Some((row.pid, row.command.clone()));
+            self.confirming_process = Some((pid, command));
             self.mode = Mode::Confirming;
             return;
         }

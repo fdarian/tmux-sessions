@@ -143,6 +143,10 @@ impl App {
     }
 
     pub fn handle_collapse_or_parent(&mut self) {
+        if self.mode == Mode::Monitor {
+            self.handle_monitor_collapse_or_parent();
+            return;
+        }
         if self.selecting {
             return;
         }
@@ -176,6 +180,10 @@ impl App {
     }
 
     pub fn handle_expand_or_child(&mut self) {
+        if self.mode == Mode::Monitor {
+            self.handle_monitor_expand_or_child();
+            return;
+        }
         if self.selecting {
             return;
         }

@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -6,12 +8,16 @@ use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph};
 
 use crate::app::{App, MonitorSort};
 use crate::event::Mode;
-use crate::procs::{self, ProcessRow};
+use crate::procs::{self, MonitorEntry, ProcessRow};
+use crate::tree;
 
 const MONITOR_MEM_WIDTH: usize = 8;
 const MONITOR_CPU_WIDTH: usize = 7;
 const MONITOR_COL_GAP: usize = 2;
-const MONITOR_COMMAND_WIDTH: usize = 28;
+// Wider than the session tree's columns: this cell also carries the
+// indent + connector prefix (see crate::tree::connector_prefix), so deep
+// nesting shouldn't truncate the command name to nothing.
+const MONITOR_COMMAND_WIDTH: usize = 40;
 
 fn monitor_pane_width(inner_width: usize) -> usize {
     let fixed = MONITOR_MEM_WIDTH
@@ -59,6 +65,18 @@ fn format_monitor_cell(value: &str, width: usize, align_right: bool) -> String {
     } else {
         format!("{:<width$}", truncated, width = width)
     }
+}
+
+fn monitor_command_cell(entry: &MonitorEntry, row: &ProcessRow, is_expanded: bool) -> String {
+    // Same indent + connector convention as the session tree (owned by
+    // crate::tree::connector_prefix), just laid out inside the COMMAND
+    // cell instead of a full line.
+    let mut text = tree::connector_prefix(entry.depth, &entry.ancestor_is_last, entry.is_last_sibling);
+    if entry.has_children {
+        text.push_str(if is_expanded { "- " } else { "+ " });
+    }
+    text.push_str(&procs::command_basename(&row.command));
+    text
 }
 
 pub fn render_monitor(frame: &mut Frame, app: &mut App, area: Rect) {
@@ -109,13 +127,20 @@ pub fn render_monitor(frame: &mut Frame, app: &mut App, area: Rect) {
     frame.render_widget(Paragraph::new(header), inner_chunks[0]);
 
     let show_detail = app.mode == Mode::ProcessDetail;
+    let row_by_pid: HashMap<u32, &ProcessRow> =
+        app.monitor_rows.iter().map(|row| (row.pid, row)).collect();
+
     let mut items: Vec<ListItem> = Vec::new();
-    for i in 0..app.monitor_rows.len() {
-        let row = &app.monitor_rows[i];
+    for (i, entry) in app.monitor_entries.iter().enumerate() {
+        let row = match row_by_pid.get(&entry.pid) {
+            Some(row) => *row,
+            None => continue,
+        };
+        let is_expanded = !app.monitor_collapsed.contains(&entry.pid);
         let mem = format_monitor_cell(&procs::format_rss_kb(row.rss_kb), MONITOR_MEM_WIDTH, true);
         let cpu = format_monitor_cell(&procs::format_pcpu(row.pcpu), MONITOR_CPU_WIDTH, true);
         let command = format_monitor_cell(
-            &procs::command_basename(&row.command),
+            &monitor_command_cell(entry, row, is_expanded),
             MONITOR_COMMAND_WIDTH,
             false,
         );
@@ -140,7 +165,7 @@ pub fn render_monitor(frame: &mut Frame, app: &mut App, area: Rect) {
     frame.render_stateful_widget(list, inner_chunks[1], &mut app.monitor_list_state);
 
     let footer = Paragraph::new(
-        "[j/k] move  [s] sort  [space] details  [enter] switch  [x] kill  [esc/q] back",
+        "[j/k] move  [h/l] collapse/expand  [s] sort  [space] details  [enter] switch  [x] kill  [esc/q] back",
     )
     .style(Style::default().fg(Color::DarkGray));
     frame.render_widget(footer, outer_chunks[1]);
