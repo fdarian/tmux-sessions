@@ -78,6 +78,56 @@ pub fn render_rename_input(frame: &mut Frame, app: &App) {
     frame.render_widget(popup, area);
 }
 
+pub fn render_quick_create_input(frame: &mut Frame, app: &App) {
+    let chars: Vec<char> = app.quick_create_buffer.chars().collect();
+    let before: String = chars[..app.quick_create_cursor].iter().collect();
+    let cursor_char = if app.quick_create_cursor < chars.len() {
+        chars[app.quick_create_cursor].to_string()
+    } else {
+        " ".to_string()
+    };
+    let after: String = if app.quick_create_cursor < chars.len() {
+        chars[app.quick_create_cursor + 1..].iter().collect()
+    } else {
+        String::new()
+    };
+
+    let input_line = Line::from(vec![
+        Span::raw(before),
+        Span::styled(
+            cursor_char,
+            Style::default().bg(Color::White).fg(Color::Black),
+        ),
+        Span::raw(after),
+    ]);
+    let hint_line = Line::from(Span::styled(
+        "Enter confirm · Esc cancel · empty = random",
+        Style::default().fg(Color::DarkGray),
+    ));
+    let text = Text::from(vec![input_line, hint_line]);
+
+    let area = super::centered_rect(50, 6, frame.area());
+    frame.render_widget(Clear, area);
+
+    let mut block = Block::default()
+        .borders(Borders::ALL)
+        .title("New session")
+        .padding(Padding::vertical(1));
+    if let Some(err) = &app.quick_create_error {
+        block = block.title_bottom(
+            Line::from(vec![Span::styled(
+                format!(" {} ", err),
+                Style::default().fg(Color::Red).add_modifier(Modifier::DIM),
+            )])
+            .alignment(Alignment::Left),
+        );
+    }
+
+    let popup = Paragraph::new(text).block(block).alignment(Alignment::Left);
+
+    frame.render_widget(popup, area);
+}
+
 pub fn render_move_window(frame: &mut Frame, app: &App) {
     let area = super::centered_rect(60, 16, frame.area());
     frame.render_widget(Clear, area);

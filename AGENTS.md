@@ -123,6 +123,7 @@ cargo run
 | `v` | Toggle visual selection mode (j/k extends the range) |
 | `M` | Move selected windows to a session |
 | `o` | Create/open a new session (history / worktree / zoxide) |
+| `c` | Quick-create a session: type a name and press Enter (empty name gets a random slug) |
 | `R` | Refresh tree |
 | `m` | Open process monitor |
 | `q` | Quit |
@@ -150,6 +151,8 @@ In create-session mode:
 - `↑` / `Ctrl-P` — move up through candidates
 - `Enter` — switch to an existing live session, resume a dead one, or create a new one
 - `Esc` — cancel
+
+`c` opens a separate, minimal quick-create prompt (`Mode::QuickCreate`) instead of the `o` popup: type a name and press Enter to create + switch to a new session in the cwd, or press Enter on an empty buffer for a random `adjective-noun` slug. `Esc` cancels.
 
 In process monitor mode:
 - `j` / `↓` — move down

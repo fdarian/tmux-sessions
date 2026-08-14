@@ -7,6 +7,7 @@ mod navigation;
 mod persist;
 mod pin_hide;
 mod preview;
+mod quick_create;
 mod rename;
 mod sessions;
 mod util;
@@ -63,6 +64,9 @@ pub struct App {
     pub renaming_target: Option<RenameTarget>,
     pub rename_buffer: String,
     pub rename_cursor: usize,
+    pub quick_create_buffer: String,
+    pub quick_create_cursor: usize,
+    pub quick_create_error: Option<String>,
     pub marked_windows: Vec<String>,
     pub selecting: bool,
     pub selection_anchor: Option<usize>,
@@ -176,6 +180,9 @@ impl App {
             renaming_target: None,
             rename_buffer: String::new(),
             rename_cursor: 0,
+            quick_create_buffer: String::new(),
+            quick_create_cursor: 0,
+            quick_create_error: None,
             marked_windows: Vec::new(),
             selecting: false,
             selection_anchor: None,
@@ -388,6 +395,16 @@ impl App {
             Action::RenameCursorEnd => self.handle_rename_cursor_end(),
             Action::ConfirmRename => self.handle_confirm_rename(),
             Action::CancelRename => self.handle_cancel_rename(),
+            Action::StartQuickCreate => self.handle_start_quick_create(),
+            Action::QuickCreateChar(c) => self.handle_quick_create_char(c),
+            Action::QuickCreateBackspace => self.handle_quick_create_backspace(),
+            Action::QuickCreateDeleteForward => self.handle_quick_create_delete_forward(),
+            Action::QuickCreateCursorLeft => self.handle_quick_create_cursor_left(),
+            Action::QuickCreateCursorRight => self.handle_quick_create_cursor_right(),
+            Action::QuickCreateCursorStart => self.handle_quick_create_cursor_start(),
+            Action::QuickCreateCursorEnd => self.handle_quick_create_cursor_end(),
+            Action::ConfirmQuickCreate => self.handle_confirm_quick_create(),
+            Action::CancelQuickCreate => self.handle_cancel_quick_create(),
             Action::EnterMonitor => self.handle_enter_monitor(),
             Action::ExitMonitor => self.handle_exit_monitor(),
             Action::ToggleMonitorSort => self.handle_toggle_monitor_sort(),

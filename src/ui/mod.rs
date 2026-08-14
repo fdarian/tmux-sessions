@@ -12,7 +12,7 @@ use crate::event::Mode;
 
 pub use create::render_create_session;
 pub use full_preview::render_full_preview;
-pub use modal::{render_about, render_confirmation, render_move_window, render_rename_input};
+pub use modal::{render_about, render_confirmation, render_move_window, render_quick_create_input, render_rename_input};
 pub use monitor::render_monitor;
 pub use tree::{render_preview, render_tree};
 
@@ -55,6 +55,10 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     if app.mode == Mode::CreateSession {
         render_create_session(frame, app);
+    }
+
+    if app.mode == Mode::QuickCreate {
+        render_quick_create_input(frame, app);
     }
 
     if app.mode == Mode::About {
