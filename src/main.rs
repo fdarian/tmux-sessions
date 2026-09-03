@@ -9,6 +9,7 @@ mod tree;
 mod ui;
 
 use std::env;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
@@ -17,7 +18,7 @@ use std::time::Duration;
 
 use crossterm::event::{self as crossterm_event, Event};
 
-use crate::app::{CaptureRequest, PreviewPane};
+use crate::app::{CaptureRequest, PreviewPane, WorktreeCreateRequest};
 use crate::event::Mode;
 use crate::tree::NodeId;
 
@@ -34,6 +35,11 @@ enum AppEvent {
     NameFormatted {
         raw_name: String,
         formatted: String,
+    },
+    WorktreeCreateDone {
+        generation: u64,
+        branch: String,
+        result: Result<PathBuf, String>,
     },
 }
 
@@ -138,6 +144,28 @@ fn spawn_formatter_worker(
     })
 }
 
+fn spawn_worktree_create_worker(
+    worktree_create_request_rx: mpsc::Receiver<WorktreeCreateRequest>,
+    app_event_tx: mpsc::Sender<AppEvent>,
+) -> thread::JoinHandle<()> {
+    thread::spawn(move || {
+        while let Ok(request) = worktree_create_request_rx.recv() {
+            let result = create::run_worktree_create(&request.command, &request.branch, &request.cwd)
+                .map_err(|err| err.to_string());
+            if app_event_tx
+                .send(AppEvent::WorktreeCreateDone {
+                    generation: request.generation,
+                    branch: request.branch,
+                    result,
+                })
+                .is_err()
+            {
+                break;
+            }
+        }
+    })
+}
+
 fn dispatch_capture_request(
     app: &mut app::App,
     capture_request_tx: &mpsc::Sender<CaptureRequest>,
@@ -150,6 +178,15 @@ fn dispatch_capture_request(
         && let Some(capture_request) = app.take_pending_capture_request()
     {
         let _ = capture_request_tx.send(capture_request);
+    }
+}
+
+fn dispatch_worktree_create_request(
+    app: &mut app::App,
+    worktree_create_request_tx: &mpsc::Sender<WorktreeCreateRequest>,
+) {
+    if let Some(request) = app.take_pending_worktree_create_request() {
+        let _ = worktree_create_request_tx.send(request);
     }
 }
 
@@ -199,10 +236,19 @@ fn main() {
     let (app_event_tx, app_event_rx) = mpsc::channel();
     let (capture_request_tx, capture_request_rx) = mpsc::channel();
     let (format_request_tx, format_request_rx) = mpsc::channel::<FormatRequest>();
+    let (worktree_create_request_tx, worktree_create_request_rx) =
+        mpsc::channel::<WorktreeCreateRequest>();
     let stop_requested = Arc::new(AtomicBool::new(false));
     let input_handle = spawn_input_thread(Arc::clone(&stop_requested), app_event_tx.clone());
     let capture_handle = spawn_capture_worker(capture_request_rx, app_event_tx.clone());
-    let formatter_handle = spawn_formatter_worker(format_request_rx, app_event_tx);
+    let formatter_handle = spawn_formatter_worker(format_request_rx, app_event_tx.clone());
+    // Not bound to a joinable handle: the worker can be parked inside a long-running
+    // `worktree_create_command` child process (tens of seconds), unlike the capture/formatter
+    // workers which always return promptly. Joining it at shutdown would block
+    // `ratatui::restore()` behind that child, leaving the terminal stuck in the alternate
+    // screen. Dropping the request sender below still lets it exit once the current
+    // command (if any) finishes; we just don't wait around for it.
+    spawn_worktree_create_worker(worktree_create_request_rx, app_event_tx);
 
     let mut terminal = ratatui::init();
 
@@ -238,6 +284,7 @@ fn main() {
                     let action = event::map_key(key, &app.mode);
                     app.handle_action(action);
                     dispatch_capture_request(&mut app, &capture_request_tx);
+                    dispatch_worktree_create_request(&mut app, &worktree_create_request_tx);
                     queue_format_requests(&app, &format_request_tx);
                     if app.mode == Mode::Filtering
                         || app.mode == Mode::CreateSession
@@ -257,6 +304,13 @@ fn main() {
             Ok(AppEvent::NameFormatted { raw_name, formatted }) => {
                 app.apply_name_formatted(raw_name, formatted);
             }
+            Ok(AppEvent::WorktreeCreateDone {
+                generation,
+                branch,
+                result,
+            }) => {
+                app.apply_worktree_create_result(generation, &branch, result);
+            }
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 // Could be monitor tick or debounce expiry (or both)
                 dispatch_capture_request(&mut app, &capture_request_tx);
@@ -275,6 +329,7 @@ fn main() {
     stop_requested.store(true, Ordering::Relaxed);
     drop(capture_request_tx);
     drop(format_request_tx);
+    drop(worktree_create_request_tx);
     let _ = input_handle.join();
     let _ = capture_handle.join();
     let _ = formatter_handle.join();

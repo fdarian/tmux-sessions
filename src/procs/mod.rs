@@ -8,6 +8,7 @@ pub use tree::{flatten_process_tree, MonitorEntry};
 
 #[derive(Clone)]
 pub struct PaneContext {
+    pub session_id: String,
     pub session_name: String,
     pub session_display: String,
     pub window_index: usize,
@@ -65,49 +66,50 @@ fn run_tmux_output(args: &[&str]) -> io::Result<String> {
 }
 
 fn list_monitor_panes() -> io::Result<Vec<MonitorPane>> {
-    let format = "#{session_name}\x1f#{window_index}\x1f#{window_name}\x1f#{pane_index}\x1f#{pane_id}\x1f#{pane_pid}\x1f#{pane_current_path}";
+    let format = "#{session_id}\x1f#{session_name}\x1f#{window_index}\x1f#{window_name}\x1f#{pane_index}\x1f#{pane_id}\x1f#{pane_pid}\x1f#{pane_current_path}";
     let output = run_tmux_output(&["list-panes", "-a", "-F", format])?;
     let mut panes = Vec::new();
     for line in output.lines() {
         if line.is_empty() {
             continue;
         }
-        let parts: Vec<&str> = line.splitn(7, '\x1f').collect();
-        if parts.len() != 7 {
+        let parts: Vec<&str> = line.splitn(8, '\x1f').collect();
+        if parts.len() != 8 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("unexpected field count in pane line: {:?}", line),
             ));
         }
-        let window_index = parts[1].parse::<usize>().map_err(|e| {
+        let window_index = parts[2].parse::<usize>().map_err(|e| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("failed to parse window_index {:?}: {}", parts[1], e),
+                format!("failed to parse window_index {:?}: {}", parts[2], e),
             )
         })?;
-        let pane_index = parts[3].parse::<usize>().map_err(|e| {
+        let pane_index = parts[4].parse::<usize>().map_err(|e| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("failed to parse pane_index {:?}: {}", parts[3], e),
+                format!("failed to parse pane_index {:?}: {}", parts[4], e),
             )
         })?;
-        let pane_pid = parts[5].parse::<u32>().map_err(|e| {
+        let pane_pid = parts[6].parse::<u32>().map_err(|e| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("failed to parse pane_pid {:?}: {}", parts[5], e),
+                format!("failed to parse pane_pid {:?}: {}", parts[6], e),
             )
         })?;
-        let session_name = parts[0].to_string();
+        let session_name = parts[1].to_string();
         panes.push(MonitorPane {
             pane_pid,
             context: PaneContext {
+                session_id: parts[0].to_string(),
                 session_name: session_name.clone(),
                 session_display: session_name,
                 window_index,
-                window_name: parts[2].to_string(),
+                window_name: parts[3].to_string(),
                 pane_index,
-                pane_id: parts[4].to_string(),
-                cwd: parts[6].to_string(),
+                pane_id: parts[5].to_string(),
+                cwd: parts[7].to_string(),
             },
         });
     }

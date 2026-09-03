@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use fuzzy_matcher::skim::SkimMatcherV2;
 
 use crate::app::App;
@@ -5,6 +7,15 @@ use crate::create::{self, CreateCandidate, CreateTab, CreateTarget};
 use crate::event::Mode;
 use crate::tmux;
 use crate::tree::NodeId;
+
+/// Sent to the worktree worker thread to run the configured `worktree_create_command`
+/// off the UI thread. Mirrors `CaptureRequest`/`FormatRequest`'s request/response shape.
+pub struct WorktreeCreateRequest {
+    pub generation: u64,
+    pub command: String,
+    pub branch: String,
+    pub cwd: PathBuf,
+}
 
 impl App {
     /// cwd for the currently highlighted tree row, if it resolves to a live session
@@ -34,6 +45,7 @@ impl App {
         self.create_zoxide_entries.clear();
         self.create_current_session_cwd = String::new();
         self.create_load_error = None;
+        self.create_worktree_branch = None;
     }
 
     pub(crate) fn rebuild_create_candidates(&mut self) {
@@ -500,31 +512,16 @@ impl App {
                     return;
                 }
             };
-            let cwd = std::path::Path::new(&self.create_current_session_cwd);
-            let worktree_path = match create::run_worktree_create(&command, &branch, cwd) {
-                Ok(path) => path,
-                Err(_) => {
-                    self.reset_create_state();
-                    self.mode = Mode::Normal;
-                    return;
-                }
-            };
-            let cwd_str = match worktree_path.into_os_string().into_string() {
-                Ok(s) => s,
-                Err(_) => {
-                    self.reset_create_state();
-                    self.mode = Mode::Normal;
-                    return;
-                }
-            };
-            let result = tmux::new_session_with_actual_name(&cwd_str, &cwd_str)
-                .and_then(|created_name| tmux::switch_client(&created_name));
-            if result.is_ok() {
-                self.should_quit = true;
-            } else {
-                self.reset_create_state();
-                self.mode = Mode::Normal;
-            }
+            self.create_worktree_generation = self.create_worktree_generation.wrapping_add(1);
+            self.create_worktree_branch = Some(branch.clone());
+            self.create_load_error = None;
+            self.pending_worktree_create_request = Some(WorktreeCreateRequest {
+                generation: self.create_worktree_generation,
+                command,
+                branch,
+                cwd: PathBuf::from(&self.create_current_session_cwd),
+            });
+            self.mode = Mode::CreatingWorktree;
             return;
         }
 
@@ -535,15 +532,15 @@ impl App {
             CreateTarget::NewWorktree { .. } => unreachable!(),
         };
 
-        let live_session_name = self
+        let live_session_id = self
             .sessions
             .iter()
             .find(|session| session.name == name)
-            .map(|session| session.name.clone());
-        let result = match live_session_name {
-            Some(name) => tmux::switch_client(&name),
-            None => tmux::new_session_with_actual_name(&name, &cwd)
-                .and_then(|created_name| tmux::switch_client(&created_name)),
+            .map(|session| session.id.clone());
+        let result = match live_session_id {
+            Some(id) => tmux::switch_client(&id),
+            None => tmux::new_session(&name, &cwd)
+                .and_then(|created| tmux::switch_client(&created.session_id)),
         };
 
         if result.is_ok() {
@@ -557,5 +554,75 @@ impl App {
     pub fn handle_cancel_create(&mut self) {
         self.reset_create_state();
         self.mode = Mode::Normal;
+    }
+
+    /// Hands the queued worktree-create request (set by `handle_confirm_create`'s
+    /// `NewWorktree` arm) to the worker thread. Called from the main loop right after
+    /// `handle_action`, mirroring `take_pending_capture_request`.
+    pub fn take_pending_worktree_create_request(&mut self) -> Option<WorktreeCreateRequest> {
+        self.pending_worktree_create_request.take()
+    }
+
+    /// Applies the worktree worker's result. Always refreshes the session list first so the
+    /// tree reflects reality whether the command succeeded or failed. `generation` guards
+    /// against a stale result from a request superseded by a later one; the mode check guards
+    /// against a result arriving after the user already backed out with `Esc` — in either case
+    /// we still refresh but must not switch or quit.
+    pub fn apply_worktree_create_result(
+        &mut self,
+        generation: u64,
+        branch: &str,
+        result: Result<PathBuf, String>,
+    ) {
+        let _ = self.refresh();
+
+        if self.mode != Mode::CreatingWorktree || generation != self.create_worktree_generation {
+            return;
+        }
+
+        let worktree_path = match result {
+            Ok(worktree_path) => worktree_path,
+            Err(message) => {
+                self.create_load_error = Some(format!("worktree {branch:?}: {message}"));
+                self.create_worktree_branch = None;
+                self.mode = Mode::CreateSession;
+                return;
+            }
+        };
+
+        let cwd_str = match crate::app::path_buf_to_string(worktree_path, "worktree path") {
+            Ok(cwd_str) => cwd_str,
+            Err(err) => {
+                self.create_load_error = Some(format!("worktree {branch:?}: {err}"));
+                self.create_worktree_branch = None;
+                self.mode = Mode::CreateSession;
+                return;
+            }
+        };
+
+        // `wt switch -y -c <branch>` (or whatever the configured command does) already
+        // created a tmux session for the new worktree; switch to it instead of creating
+        // a duplicate. Only fall back to creating one when no live session claims that cwd.
+        let existing_session_id = self
+            .sessions
+            .iter()
+            .find(|session| session.cwd == cwd_str)
+            .map(|session| session.id.clone());
+        let switch_result = match existing_session_id {
+            Some(id) => tmux::switch_client(&id),
+            None => tmux::new_session(&cwd_str, &cwd_str)
+                .and_then(|created| tmux::switch_client(&created.session_id)),
+        };
+
+        match switch_result {
+            Ok(()) => {
+                self.should_quit = true;
+            }
+            Err(err) => {
+                self.create_load_error = Some(format!("worktree {branch:?}: {err}"));
+                self.create_worktree_branch = None;
+                self.mode = Mode::CreateSession;
+            }
+        }
     }
 }

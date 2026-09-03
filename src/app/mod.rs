@@ -26,6 +26,7 @@ use crate::procs::{MonitorEntry, ProcessRow};
 use crate::tmux;
 use crate::tree::{self, DeadSessionRef, FlatEntry, NodeId};
 
+pub use create_session::WorktreeCreateRequest;
 pub use kill::ConfirmKillTarget;
 pub use monitor::MonitorSort;
 pub use move_window::MoveCandidate;
@@ -85,6 +86,9 @@ pub struct App {
     pub create_zoxide_entries: Vec<ZoxideEntry>,
     pub create_current_session_cwd: String,
     pub create_load_error: Option<String>,
+    pub create_worktree_branch: Option<String>,
+    create_worktree_generation: u64,
+    pending_worktree_create_request: Option<WorktreeCreateRequest>,
     pub dead_sessions: Vec<DeadSession>,
     pub monitor_rows: Vec<ProcessRow>,
     pub monitor_entries: Vec<MonitorEntry>,
@@ -201,6 +205,9 @@ impl App {
             create_zoxide_entries: Vec::new(),
             create_current_session_cwd: String::new(),
             create_load_error: None,
+            create_worktree_branch: None,
+            create_worktree_generation: 0,
+            pending_worktree_create_request: None,
             dead_sessions,
             monitor_rows: Vec::new(),
             monitor_entries: Vec::new(),

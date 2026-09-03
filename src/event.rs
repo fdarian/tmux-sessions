@@ -120,6 +120,7 @@ pub enum Mode {
     Filtering,
     MoveWindow,
     CreateSession,
+    CreatingWorktree,
     Previewing,
     Renaming,
     QuickCreate,
@@ -229,6 +230,10 @@ pub fn map_key(key: KeyEvent, mode: &Mode) -> Action {
             (KeyCode::Backspace, _) => Action::CreateBackspace,
             (KeyCode::Delete, _) => Action::CreateDeleteForward,
             (KeyCode::Char(c), _) if c.is_ascii_graphic() || c == ' ' => Action::CreateChar(c),
+            _ => Action::None,
+        },
+        Mode::CreatingWorktree => match key.code {
+            KeyCode::Esc => Action::CancelCreate,
             _ => Action::None,
         },
         Mode::Renaming => match (key.code, key.modifiers) {

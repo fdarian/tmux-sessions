@@ -67,8 +67,8 @@ impl App {
                     Some(d) => d.cwd.clone(),
                     None => return,
                 };
-                tmux::new_session_with_actual_name(name, &cwd)
-                    .and_then(|created_name| tmux::switch_client(&created_name))
+                tmux::new_session(name, &cwd)
+                    .and_then(|created| tmux::switch_client(&created.session_id))
             }
             NodeId::Recent(_) => unreachable!(),
         };

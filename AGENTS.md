@@ -8,7 +8,7 @@ A Rust TUI reimplementation of tmux's `choose-tree` — a tree-based session/win
 
 ```
 src/
-  main.rs    — entry point, terminal setup/teardown, unified AppEvent loop, 3 worker threads
+  main.rs    — entry point, terminal setup/teardown, unified AppEvent loop, 4 worker threads
   app.rs     — App state, Mode, handle_action (TEA update), PreviewPane struct
   config.rs  — optional config loading (~/.config/tmux-sessions/config.json), format_session_name
   create.rs  — create-session popup sources: history/worktree/zoxide tabs and candidate types
@@ -22,11 +22,12 @@ src/
 
 ### Threading / event model
 
-`main.rs` owns a single `mpsc::Receiver<AppEvent>` and three worker threads:
+`main.rs` owns a single `mpsc::Receiver<AppEvent>` and four worker threads:
 
 - **Input thread**: polls crossterm events → sends `AppEvent::Input`
 - **Capture worker**: receives `CaptureRequest`, runs `tmux capture-pane` (blocking, off UI thread) → sends `AppEvent::CaptureDone { generation, node_id, panes }`
 - **Formatter worker**: receives `FormatRequest`, runs the configured formatter script → sends `AppEvent::NameFormatted { raw_name, formatted }`
+- **Worktree worker**: receives `WorktreeCreateRequest { generation, command, branch, cwd }`, runs the configured `worktree_create_command` with its output captured (not inherited, so it can't corrupt the alternate screen) → sends `AppEvent::WorktreeCreateDone { generation, branch, result }`
 
 The main loop blocks on `recv` (or `recv_timeout` when Monitor mode or debounce is pending). On timeout: dispatch the debounced capture request and/or tick the monitor.
 
@@ -43,6 +44,7 @@ Sessions start with raw names. `formatter_cache: HashMap<String, String>` is in-
 ## Key Conventions
 
 - **Delimiter**: `\x1f` (ASCII unit separator) in tmux format strings to avoid issues with names containing colons
+- **Target sessions by id, not name**: tmux `-t` targets must always be ids (`$N` / `@N` / `%N`) for a session — never the session name. tmux splits the target on `.` looking for a `session.pane` component, so any session name containing a dot (worktree paths under `.claude/`) misresolves; `=name` exact-match syntax does not avoid this. Names are still correct for `new-session -s` and rename's new-name argument.
 - **No destructuring**: Access struct fields directly (`obj.field`), never `let { field } = obj`
 - **No dummy/fallback values**: Propagate errors properly, don't use `unwrap_or("")` style fallbacks
 - **Flat-entry model**: Tree is flattened into `Vec<FlatEntry>` based on which nodes are in the `opened` set, rebuilt on expand/collapse/refresh
@@ -141,7 +143,7 @@ In move-window mode:
 Press `o` to open a create/resume popup with Tab / Shift+Tab cycling across the available sub-tabs. The popup's cwd is the highlighted tree row's session cwd (its dead session cwd for a `NodeId::DeadSession` row, its `@` peer session's cwd for a `Group` row), falling back to the process cwd when the row doesn't resolve to a session (empty tree, a separator/header row, or a `Group` with no `@` peer). Every "cwd" below refers to this resolved value.
 
 - **History** — always visible. Fuzzy-matches recently closed sessions and can resume them or create a new named session from the current query.
-- **Worktree** — visible when the cwd is inside a git repo with linked worktrees (>1 entry in `git worktree list --porcelain`), OR whenever `worktree_create_command` is configured and cwd is inside any git repo (even with 0 linked worktrees). When `worktree_create_command` is set and the query matches no existing branch, a synthetic "+ Create worktree" candidate appears at the bottom; Enter creates the worktree via the configured command, discovers the path via git, and opens a new tmux session there.
+- **Worktree** — visible when the cwd is inside a git repo with linked worktrees (>1 entry in `git worktree list --porcelain`), OR whenever `worktree_create_command` is configured and cwd is inside any git repo (even with 0 linked worktrees). When `worktree_create_command` is set and the query matches no existing branch, a synthetic "+ Create worktree" candidate appears at the bottom; Enter hands the branch off to the worktree worker thread and switches to `Mode::CreatingWorktree`, showing `Creating worktree "<branch>"…` in place of the candidate list while only `Esc` is active. The worker runs the configured command (output captured, not inherited) and re-queries `git worktree list --porcelain` for the new path. On success the session list is refreshed and the app switches to the live session the command already created at that path (matched by cwd), only creating a new one if none matches, then quits. On failure — or if no session can be switched to — the popup stays open in `Mode::CreateSession` with the error shown via `create_load_error`, the same surface used for tab-load failures. `Esc` during `Mode::CreatingWorktree` returns to Normal immediately; a result that arrives afterward still refreshes the tree but does not switch or quit.
 - **Zoxide** — visible only when `"zoxide": true` is set in `config.json` and `zoxide` is installed on `PATH`.
 
 In create-session mode:

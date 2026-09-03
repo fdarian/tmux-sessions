@@ -69,7 +69,7 @@ impl App {
             Some(row) => row,
             None => return,
         };
-        let result = tmux::switch_client(&row.pane.session_name)
+        let result = tmux::switch_client(&row.pane.session_id)
             .and_then(|_| tmux::select_pane(&row.pane.pane_id));
         if result.is_ok() {
             self.should_quit = true;

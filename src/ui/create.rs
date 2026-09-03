@@ -64,7 +64,12 @@ pub fn render_create_session(frame: &mut Frame, app: &App) {
         .constraints([Constraint::Min(0), Constraint::Length(1)])
         .split(inner);
 
-    if app.create_candidates.is_empty() {
+    if let Some(branch) = &app.create_worktree_branch {
+        let message = format!("Creating worktree \"{branch}\"…");
+        let hint = Paragraph::new(Span::styled(message, Style::default().fg(Color::DarkGray)))
+            .alignment(Alignment::Center);
+        frame.render_widget(hint, chunks[0]);
+    } else if app.create_candidates.is_empty() {
         let message = if app.create_tab == CreateTab::History {
             "no matches - type a name to create"
         } else if app.create_tab == CreateTab::Worktree

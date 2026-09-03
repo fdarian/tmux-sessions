@@ -186,15 +186,23 @@ pub fn run_worktree_create(command: &str, branch: &str, cwd: &Path) -> io::Resul
         .map(|token| token.replace("{branch}", branch))
         .collect();
 
-    let status = Command::new(tokens[0].replace("{branch}", branch))
+    let output = Command::new(tokens[0].replace("{branch}", branch))
         .args(&args)
         .current_dir(cwd)
-        .status()?;
+        .output()?;
 
-    if !status.success() {
-        return Err(io::Error::other(
-            format!("worktree create command exited with status {status}"),
-        ));
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stderr = stderr.trim();
+        let message = if stderr.is_empty() {
+            format!("worktree create command exited with status {}", output.status)
+        } else {
+            format!(
+                "worktree create command exited with status {}: {}",
+                output.status, stderr
+            )
+        };
+        return Err(io::Error::other(message));
     }
 
     let output = Command::new("git")

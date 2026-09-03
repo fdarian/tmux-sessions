@@ -311,14 +311,26 @@ impl App {
         };
         let target_session_id;
         let mut cleanup_window_id: Option<String> = None;
+        // `move_target` is always a session id, never a name: tmux's `-t` target parsing
+        // splits on `.` looking for a window/pane component, which misreads any session
+        // name containing a dot (e.g. worktree paths under `.claude/`) as part of a
+        // `session.pane` target.
         let move_target = match candidate.target {
             MoveTarget::Existing(name) => {
-                target_session_id = self
+                let found_id = self
                     .sessions
                     .iter()
                     .find(|session| session.name == name)
                     .map(|session| session.id.clone());
-                name
+                target_session_id = found_id.clone();
+                match found_id {
+                    Some(id) => id,
+                    None => {
+                        self.reset_move_window_state();
+                        self.mode = Mode::Normal;
+                        return;
+                    }
+                }
             }
             MoveTarget::Dead { name, cwd } => match tmux::new_session(&name, &cwd) {
                 Ok(created) => {

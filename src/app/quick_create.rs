@@ -21,8 +21,8 @@ const NOUNS: &[&str] = &[
 
 /// Generates a random `adjective-noun` slug (e.g. `swift-otter`) for sessions created
 /// with an empty name. Seeded from `RandomState` to avoid pulling in a `rand` dependency;
-/// collisions are harmless since `tmux::new_session_with_actual_name` returns the name
-/// tmux actually assigned.
+/// collisions are harmless since we only ever switch to the session by the id
+/// `tmux::new_session` returns, never by this name.
 fn random_slug() -> String {
     let adjective_index = (RandomState::new().build_hasher().finish() as usize) % ADJECTIVES.len();
     let noun_index = (RandomState::new().build_hasher().finish() as usize) % NOUNS.len();
@@ -130,8 +130,8 @@ impl App {
             }
         };
 
-        let result = tmux::new_session_with_actual_name(&name, &cwd)
-            .and_then(|created_name| tmux::switch_client(&created_name));
+        let result = tmux::new_session(&name, &cwd)
+            .and_then(|created| tmux::switch_client(&created.session_id));
         match result {
             Ok(()) => {
                 self.mode = Mode::Normal;

@@ -53,7 +53,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         render_move_window(frame, app);
     }
 
-    if app.mode == Mode::CreateSession {
+    if app.mode == Mode::CreateSession || app.mode == Mode::CreatingWorktree {
         render_create_session(frame, app);
     }
 
