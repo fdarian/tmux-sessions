@@ -68,7 +68,7 @@ Optional config file at `~/.config/tmux-sessions/config.json`:
 - **group_name_separator**: Groups sessions by the prefix before the first occurrence of this separator in their `display_name`. Sessions without the separator appear ungrouped at the root level. Groups start expanded and can be collapsed/expanded with `h`/`l`. Pinned sessions are pulled out of their group and shown at the top (with the same separator as in flat mode); group counts reflect only unpinned members. A session whose `display_name` exactly equals a group's prefix (e.g. `fdarian/rheya` alongside `fdarian/rheya/artifacts-tools`) is folded into that group as its first child, displayed as `@` instead of repeating the prefix.
 - **recents**: Optional opt-in view config. `enabled: true` turns on a labeled `recents` section. `max_age_secs` defaults to `3600` when omitted and limits eligibility to live sessions whose `session_activity` is within that age window.
 - **zoxide**: Enables the create-session popup's zoxide tab when set to `true` and the `zoxide` binary is installed
-- **worktree_create_command**: Template command to create a new git worktree. `{branch}` is substituted with the typed branch name. Run directly (no shell), cwd = current session's cwd. After running, git worktree list is re-queried to find the new worktree path; the session is created there. When set, the Worktree tab appears whenever cwd is inside any git repo (not just repos with >1 existing worktree). Example: `"wt switch -y -c {branch}"`.
+- **worktree_create_command**: Template command to create a new git worktree. `{branch}` is substituted with the typed branch name. Run directly (no shell), cwd = the create-session popup's resolved cwd (see Create session below). After running, git worktree list is re-queried to find the new worktree path; the session is created there. When set, the Worktree tab appears whenever cwd is inside any git repo (not just repos with >1 existing worktree). Example: `"wt switch -y -c {branch}"`.
 - Missing config file → raw session names used (no error)
 - Invalid JSON → app fails to start with error
 - Formatter failure (missing script, non-zero exit, empty output) → per-session fallback to raw name
@@ -138,7 +138,7 @@ In move-window mode:
 
 ## Create session
 
-Press `o` to open a create/resume popup with Tab / Shift+Tab cycling across the available sub-tabs:
+Press `o` to open a create/resume popup with Tab / Shift+Tab cycling across the available sub-tabs. The popup's cwd is the highlighted tree row's session cwd (its dead session cwd for a `NodeId::DeadSession` row, its `@` peer session's cwd for a `Group` row), falling back to the process cwd when the row doesn't resolve to a session (empty tree, a separator/header row, or a `Group` with no `@` peer). Every "cwd" below refers to this resolved value.
 
 - **History** — always visible. Fuzzy-matches recently closed sessions and can resume them or create a new named session from the current query.
 - **Worktree** — visible when the cwd is inside a git repo with linked worktrees (>1 entry in `git worktree list --porcelain`), OR whenever `worktree_create_command` is configured and cwd is inside any git repo (even with 0 linked worktrees). When `worktree_create_command` is set and the query matches no existing branch, a synthetic "+ Create worktree" candidate appears at the bottom; Enter creates the worktree via the configured command, discovers the path via git, and opens a new tmux session there.

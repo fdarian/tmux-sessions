@@ -4,8 +4,25 @@ use crate::app::App;
 use crate::create::{self, CreateCandidate, CreateTab, CreateTarget};
 use crate::event::Mode;
 use crate::tmux;
+use crate::tree::NodeId;
 
 impl App {
+    /// cwd for the currently highlighted tree row, if it resolves to a live session
+    /// (via `session_for_node`) or a dead session (via its own recorded cwd).
+    fn selected_create_cwd(&self) -> Option<String> {
+        let index = self.list_state.selected()?;
+        let node_id = &self.flat_entries.get(index)?.node_id;
+        if let NodeId::DeadSession(name) = node_id.target() {
+            return self
+                .dead_sessions
+                .iter()
+                .find(|dead_session| dead_session.name == *name)
+                .map(|dead_session| dead_session.cwd.clone());
+        }
+        self.session_for_node(node_id)
+            .map(|session| session.cwd.clone())
+    }
+
     fn reset_create_state(&mut self) {
         self.create_query = String::new();
         self.create_cursor = 0;
@@ -234,10 +251,15 @@ impl App {
     }
 
     pub fn handle_enter_create(&mut self) {
-        let current_dir = match std::env::current_dir() {
-            Ok(dir) => dir,
-            Err(_) => return,
+        let cwd_string = match self.selected_create_cwd().or_else(|| {
+            std::env::current_dir()
+                .ok()
+                .and_then(|dir| crate::app::path_buf_to_string(dir, "current directory").ok())
+        }) {
+            Some(cwd) => cwd,
+            None => return,
         };
+        let current_dir = std::path::PathBuf::from(&cwd_string);
 
         self.reset_create_state();
         self.create_available_tabs.push(CreateTab::History);
@@ -286,11 +308,7 @@ impl App {
             self.create_load_error = Some(load_errors.join("  "));
         }
 
-        self.create_current_session_cwd =
-            match crate::app::path_buf_to_string(current_dir, "current directory") {
-                Ok(path) => path,
-                Err(_) => return,
-            };
+        self.create_current_session_cwd = cwd_string;
         self.create_tab = self.create_available_tabs[0];
         self.rebuild_create_candidates();
         self.mode = Mode::CreateSession;

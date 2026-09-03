@@ -57,7 +57,7 @@ impl App {
             NodeId::Pane(session_id, window_id, pane_id) => tmux::switch_client(session_id)
                 .and_then(|_| tmux::select_window(window_id))
                 .and_then(|_| tmux::select_pane(pane_id)),
-            NodeId::Group(prefix) => match self.sessions.iter().find(|s| s.display_name == *prefix) {
+            NodeId::Group(_) => match self.session_for_node(node_id) {
                 Some(peer) => tmux::switch_client(&peer.id),
                 None => return,
             },

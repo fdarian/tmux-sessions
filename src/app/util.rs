@@ -4,6 +4,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use fuzzy_matcher::skim::SkimMatcherV2;
 
+use crate::app::App;
 use crate::config;
 use crate::tmux;
 use crate::tree::{self, FlatEntry, NodeId};
@@ -80,6 +81,19 @@ pub fn extract_session_id(node_id: &NodeId) -> Option<&String> {
         NodeId::Window(session_id, _) => Some(session_id),
         NodeId::Pane(session_id, _, _) => Some(session_id),
         _ => None,
+    }
+}
+
+impl App {
+    /// Resolves a NodeId to its underlying tmux session: Session/Window/Pane and
+    /// `Recent`-wrapped variants via `extract_session_id`, and `Group` to its `@` peer
+    /// session (a session whose `display_name` equals the group's prefix), if any.
+    pub fn session_for_node(&self, node_id: &NodeId) -> Option<&tmux::Session> {
+        if let NodeId::Group(prefix) = node_id.target() {
+            return self.sessions.iter().find(|s| s.display_name == *prefix);
+        }
+        let session_id = extract_session_id(node_id)?;
+        self.sessions.iter().find(|s| s.id == *session_id)
     }
 }
 
