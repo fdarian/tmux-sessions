@@ -9,7 +9,21 @@ A Rust TUI reimplementation of tmux's `choose-tree` — a tree-based session/win
 ```
 src/
   main.rs    — entry point, terminal setup/teardown, unified AppEvent loop, 4 worker threads
-  app.rs     — App state, Mode, handle_action (TEA update), PreviewPane struct
+  app/       — App state and handle_action (TEA update), split by concern:
+    mod.rs            — App struct, Mode enum, handle_action dispatch
+    create_session.rs — create-session popup (history/worktree/zoxide candidates, worktree-create flow)
+    quick_create.rs
+    move_window.rs
+    rename.rs
+    kill.rs
+    pin_hide.rs
+    navigation.rs
+    filter.rs
+    preview.rs
+    monitor.rs
+    sessions.rs        — DeadSession, computing the dead-session set from history vs. live sessions
+    persist.rs         — pins.json / hidden.json read-write
+    util.rs            — shared helpers (session_for_node, session_for_cwd, path/index utilities)
   config.rs  — optional config loading (~/.config/tmux-sessions/config.json), format_session_name
   create.rs  — create-session popup sources: history/worktree/zoxide tabs and candidate types
   tmux.rs    — all tmux command interaction (list/kill/switch/capture); move_window, capture_pane_raw, get_mode_style, parse_style functions
@@ -143,7 +157,7 @@ In move-window mode:
 Press `o` to open a create/resume popup with Tab / Shift+Tab cycling across the available sub-tabs. The popup's cwd is the highlighted tree row's session cwd (its dead session cwd for a `NodeId::DeadSession` row, its `@` peer session's cwd for a `Group` row), falling back to the process cwd when the row doesn't resolve to a session (empty tree, a separator/header row, or a `Group` with no `@` peer). Every "cwd" below refers to this resolved value.
 
 - **History** — always visible. Fuzzy-matches recently closed sessions and can resume them or create a new named session from the current query.
-- **Worktree** — visible when the cwd is inside a git repo with linked worktrees (>1 entry in `git worktree list --porcelain`), OR whenever `worktree_create_command` is configured and cwd is inside any git repo (even with 0 linked worktrees). When `worktree_create_command` is set and the query matches no existing branch, a synthetic "+ Create worktree" candidate appears at the bottom; Enter hands the branch off to the worktree worker thread and switches to `Mode::CreatingWorktree`, showing `Creating worktree "<branch>"…` in place of the candidate list while only `Esc` is active. The worker runs the configured command (output captured, not inherited) and re-queries `git worktree list --porcelain` for the new path. On success the session list is refreshed and the app switches to the live session the command already created at that path (matched by cwd), only creating a new one if none matches, then quits. On failure — or if no session can be switched to — the popup stays open in `Mode::CreateSession` with the error shown via `create_load_error`, the same surface used for tab-load failures. `Esc` during `Mode::CreatingWorktree` returns to Normal immediately; a result that arrives afterward still refreshes the tree but does not switch or quit.
+- **Worktree** — visible when the cwd is inside a git repo with linked worktrees (>1 entry in `git worktree list --porcelain`), OR whenever `worktree_create_command` is configured and cwd is inside any git repo (even with 0 linked worktrees). When `worktree_create_command` is set and the query matches no existing branch, a synthetic "+ Create worktree" candidate appears at the bottom; Enter hands the branch off to the worktree worker thread and switches to `Mode::CreatingWorktree`, showing `Creating worktree "<branch>"…` in place of the candidate list while only `Esc` is active. The worker runs the configured command (output captured, not inherited), then — regardless of its exit status — re-queries `git worktree list --porcelain` and looks up a worktree on the requested branch; a match counts as success even if the command itself exited non-zero (e.g. the worktree already existed). When found, the session list is refreshed and the app switches to the live session the command already created at that path (matched by cwd), only creating a new one if none matches, then quits. The error only surfaces — leaving the popup open in `Mode::CreateSession` via `create_load_error`, the same surface used for tab-load failures — when no worktree for that branch exists after the command runs, or when no session can be switched to. `Esc` during `Mode::CreatingWorktree` returns to Normal immediately; a result that arrives afterward still refreshes the tree but does not switch or quit.
 - **Zoxide** — visible only when `"zoxide": true` is set in `config.json` and `zoxide` is installed on `PATH`.
 
 In create-session mode:

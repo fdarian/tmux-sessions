@@ -525,6 +525,22 @@ impl App {
             return;
         }
 
+        // `PathDir` candidates name the session after its full path, but tmux sanitizes `.`
+        // to `_` in session names created some other way (e.g. `wt switch`), so a name-based
+        // lookup can miss a live session that already owns this directory. Look it up by cwd
+        // instead; the other targets keep matching by name since they're not path-derived.
+        let live_session_id = match &candidate.target {
+            CreateTarget::PathDir { path } => {
+                self.session_for_cwd(path).map(|session| session.id.clone())
+            }
+            CreateTarget::ResumeDead { name, .. } | CreateTarget::NewNamed { name, .. } => self
+                .sessions
+                .iter()
+                .find(|session| session.name == *name)
+                .map(|session| session.id.clone()),
+            CreateTarget::NewWorktree { .. } => unreachable!(),
+        };
+
         let (name, cwd) = match candidate.target {
             CreateTarget::ResumeDead { name, cwd } => (name, cwd),
             CreateTarget::NewNamed { name, cwd } => (name, cwd),
@@ -532,11 +548,6 @@ impl App {
             CreateTarget::NewWorktree { .. } => unreachable!(),
         };
 
-        let live_session_id = self
-            .sessions
-            .iter()
-            .find(|session| session.name == name)
-            .map(|session| session.id.clone());
         let result = match live_session_id {
             Some(id) => tmux::switch_client(&id),
             None => tmux::new_session(&name, &cwd)
@@ -604,9 +615,7 @@ impl App {
         // created a tmux session for the new worktree; switch to it instead of creating
         // a duplicate. Only fall back to creating one when no live session claims that cwd.
         let existing_session_id = self
-            .sessions
-            .iter()
-            .find(|session| session.cwd == cwd_str)
+            .session_for_cwd(&cwd_str)
             .map(|session| session.id.clone());
         let switch_result = match existing_session_id {
             Some(id) => tmux::switch_client(&id),

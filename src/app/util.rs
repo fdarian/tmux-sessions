@@ -95,6 +95,25 @@ impl App {
         let session_id = extract_session_id(node_id)?;
         self.sessions.iter().find(|s| s.id == *session_id)
     }
+
+    /// Finds a live session whose cwd is the same directory as `cwd`. Compares canonicalized
+    /// paths (falling back to the raw string for a side that fails to canonicalize, e.g. a
+    /// path no longer on disk) so that tmux's sanitized session names — which turn a session's
+    /// path-derived name into a different string than its actual cwd — don't cause a live
+    /// session to be missed and duplicated.
+    pub fn session_for_cwd(&self, cwd: &str) -> Option<&tmux::Session> {
+        let canonical_cwd = canonicalize_or_self(cwd);
+        self.sessions
+            .iter()
+            .find(|session| canonicalize_or_self(&session.cwd) == canonical_cwd)
+    }
+}
+
+fn canonicalize_or_self(path: &str) -> String {
+    std::fs::canonicalize(path)
+        .ok()
+        .and_then(|canonical| canonical.into_os_string().into_string().ok())
+        .unwrap_or_else(|| path.to_string())
 }
 
 pub fn is_non_selectable(node_id: &NodeId) -> bool {

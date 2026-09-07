@@ -191,19 +191,26 @@ pub fn run_worktree_create(command: &str, branch: &str, cwd: &Path) -> io::Resul
         .current_dir(cwd)
         .output()?;
 
-    if !output.status.success() {
+    // The command can exit non-zero for a reason that doesn't actually mean failure here:
+    // e.g. `wt switch -y -c <branch>` reports "Directory already exists" when the worktree
+    // was already created by an earlier run. Rather than trust the exit code, always
+    // re-query `git worktree list --porcelain` afterward and look for a worktree on the
+    // requested branch. If one exists, the goal was met regardless of the exit code. Only
+    // surface the command's error when no such worktree exists.
+    let command_error = if output.status.success() {
+        None
+    } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stderr = stderr.trim();
-        let message = if stderr.is_empty() {
+        Some(if stderr.is_empty() {
             format!("worktree create command exited with status {}", output.status)
         } else {
             format!(
                 "worktree create command exited with status {}: {}",
                 output.status, stderr
             )
-        };
-        return Err(io::Error::other(message));
-    }
+        })
+    };
 
     let output = Command::new("git")
         .current_dir(cwd)
@@ -212,13 +219,12 @@ pub fn run_worktree_create(command: &str, branch: &str, cwd: &Path) -> io::Resul
     let stdout = command_stdout(output, "git worktree list --porcelain")?;
     let entries = parse_worktree_entries(&stdout)?;
 
-    let matched = entries
-        .into_iter()
-        .find(|entry| entry.branch == branch);
+    let matched = entries.into_iter().find(|entry| entry.branch == branch);
 
-    match matched {
-        Some(entry) => Ok(PathBuf::from(entry.path)),
-        None => Err(io::Error::new(
+    match (matched, command_error) {
+        (Some(entry), _) => Ok(PathBuf::from(entry.path)),
+        (None, Some(message)) => Err(io::Error::other(message)),
+        (None, None) => Err(io::Error::new(
             io::ErrorKind::NotFound,
             format!("worktree for branch {branch:?} not found after create command ran"),
         )),
