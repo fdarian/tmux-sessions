@@ -41,6 +41,32 @@ pub struct PreviewFullPane {
     pub content: Vec<u8>,
 }
 
+fn full_preview_window_panes<'a>(
+    panes: &'a [tmux::Pane],
+    session_id: &str,
+    window_id: &str,
+) -> Vec<&'a tmux::Pane> {
+    let mut window_panes: Vec<&tmux::Pane> = panes
+        .iter()
+        .filter(|pane| pane.session_id == session_id && pane.window_id == window_id)
+        .collect();
+    window_panes.sort_by_key(|pane| pane.index);
+    window_panes
+}
+
+fn full_preview_initial_index(
+    panes: &[&tmux::Pane],
+    selected_pane_id: Option<&str>,
+) -> Option<usize> {
+    match selected_pane_id {
+        Some(selected_pane_id) => panes.iter().position(|pane| pane.id == selected_pane_id),
+        None => panes
+            .iter()
+            .position(|pane| pane.active)
+            .or_else(|| (!panes.is_empty()).then_some(0)),
+    }
+}
+
 impl App {
     pub fn update_preview(&mut self) {
         self.preview_generation = self.preview_generation.wrapping_add(1);
@@ -213,74 +239,54 @@ impl App {
             | NodeId::Group(_)
             | NodeId::Header(_) => (Vec::new(), 0),
             NodeId::Pane(session_id, window_id, pane_id) => {
-                let session = self.sessions.iter().find(|s| s.id == *session_id);
-                let window = self.windows.iter().find(|w| w.id == *window_id);
-                let pane = self.panes.iter().find(|p| p.id == *pane_id);
-
-                let session_name = session
-                    .map(|s| s.display_name.clone())
-                    .unwrap_or_else(|| session_id.clone());
-                let window_label = window
-                    .map(|w| format!("{}:{}", w.index, w.name))
-                    .unwrap_or_else(|| window_id.clone());
-                let pane_label = pane
-                    .map(|p| format!("{}:{}", p.index, p.current_command))
-                    .unwrap_or_else(|| pane_id.clone());
-                let content = tmux::capture_pane_raw(pane_id).unwrap_or_default();
-
-                let preview = PreviewFullPane {
-                    session_id: session_id.clone(),
-                    window_id: window_id.clone(),
-                    pane_id: pane_id.clone(),
-                    session_name,
-                    window_label,
-                    pane_label,
-                    content,
-                };
-                (vec![preview], 0)
+                self.build_full_preview_for_window(session_id, window_id, Some(pane_id))
             }
             NodeId::Window(session_id, window_id) => {
-                let session = self.sessions.iter().find(|s| s.id == *session_id);
-                let session_name = session
-                    .map(|s| s.display_name.clone())
-                    .unwrap_or_else(|| session_id.clone());
-
-                let mut window_panes: Vec<&crate::tmux::Pane> = self
-                    .panes
-                    .iter()
-                    .filter(|p| p.session_id == *session_id && p.window_id == *window_id)
-                    .collect();
-                window_panes.sort_by(|a, b| a.index.cmp(&b.index));
-
-                let initial_index = window_panes.iter().position(|p| p.active).unwrap_or(0);
-
-                let previews: Vec<PreviewFullPane> = window_panes
-                    .iter()
-                    .map(|pane| {
-                        let window = self.windows.iter().find(|w| w.id == *window_id);
-                        let window_label = window
-                            .map(|w| format!("{}:{}", w.index, w.name))
-                            .unwrap_or_else(|| window_id.clone());
-                        let pane_label = format!("{}:{}", pane.index, pane.current_command);
-                        let content = tmux::capture_pane_raw(&pane.id).unwrap_or_default();
-
-                        PreviewFullPane {
-                            session_id: session_id.clone(),
-                            window_id: window_id.clone(),
-                            pane_id: pane.id.clone(),
-                            session_name: session_name.clone(),
-                            window_label,
-                            pane_label,
-                            content,
-                        }
-                    })
-                    .collect();
-
-                (previews, initial_index)
+                self.build_full_preview_for_window(session_id, window_id, None)
             }
             NodeId::Session(session_id) => self.build_full_preview_for_session(session_id),
             NodeId::Recent(_) => unreachable!(),
         }
+    }
+
+    fn build_full_preview_for_window(
+        &self,
+        session_id: &str,
+        window_id: &str,
+        selected_pane_id: Option<&str>,
+    ) -> (Vec<PreviewFullPane>, usize) {
+        let session_name = self
+            .sessions
+            .iter()
+            .find(|session| session.id == session_id)
+            .map(|session| session.display_name.clone())
+            .unwrap_or_else(|| session_id.to_string());
+        let window_label = self
+            .windows
+            .iter()
+            .find(|window| window.id == window_id)
+            .map(|window| format!("{}:{}", window.index, window.name))
+            .unwrap_or_else(|| window_id.to_string());
+        let window_panes = full_preview_window_panes(&self.panes, session_id, window_id);
+        let initial_index = match full_preview_initial_index(&window_panes, selected_pane_id) {
+            Some(initial_index) => initial_index,
+            None => return (Vec::new(), 0),
+        };
+
+        let previews: Vec<PreviewFullPane> = window_panes
+            .iter()
+            .map(|pane| PreviewFullPane {
+                session_id: session_id.to_string(),
+                window_id: window_id.to_string(),
+                pane_id: pane.id.clone(),
+                session_name: session_name.clone(),
+                window_label: window_label.clone(),
+                pane_label: format!("{}:{}", pane.index, pane.current_command),
+                content: tmux::capture_pane_raw(&pane.id).unwrap_or_default(),
+            })
+            .collect();
+
+        (previews, initial_index)
     }
 
     fn build_full_preview_for_session(&self, session_id: &str) -> (Vec<PreviewFullPane>, usize) {
@@ -379,5 +385,42 @@ impl App {
                 self.should_quit = true;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod full_preview_tests {
+    use super::full_preview_initial_index;
+    use super::full_preview_window_panes;
+    use crate::tmux::Pane;
+
+    fn pane(id: &str, session_id: &str, window_id: &str, index: usize, active: bool) -> Pane {
+        Pane {
+            session_id: session_id.to_string(),
+            window_id: window_id.to_string(),
+            id: id.to_string(),
+            index,
+            title: String::new(),
+            current_command: "zsh".to_string(),
+            active,
+        }
+    }
+
+    #[test]
+    fn pane_preview_includes_window_siblings_and_starts_on_selected_pane() {
+        let panes = vec![
+            pane("%1", "$1", "@1", 1, false),
+            pane("%0", "$1", "@1", 0, true),
+            pane("%2", "$1", "@2", 0, true),
+        ];
+
+        let window_panes = full_preview_window_panes(&panes, "$1", "@1");
+        let pane_ids: Vec<&str> = window_panes.iter().map(|pane| pane.id.as_str()).collect();
+
+        assert_eq!(pane_ids, vec!["%0", "%1"]);
+        assert_eq!(
+            full_preview_initial_index(&window_panes, Some("%1")),
+            Some(1)
+        );
     }
 }
